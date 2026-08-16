@@ -1,0 +1,101 @@
+! ––– 3D script ––– !
+! Scratch file for trying the server out. Hover `zzyzx`, `BLOCK` or `WALL_HEIGHT`,
+! and watch the diagnostics for the deliberate mistakes near the bottom.
+
+material matBody
+pen 1
+
+if bShowFrame then
+	addz zzyzx / 2
+	block A, B, 0.02
+	del 1
+endif
+
+! `count` is local to this script — 2d.gdl has its own, unrelated `count`.
+count = 4
+for i = 1 to count
+	addx A / count
+	if iDetailLevel > 1 then cylind zzyzx * gDetailFactor, 0.05
+next i
+del count
+
+! --- things that are fine, and must NOT be flagged ----------------------------
+
+nWidth = 1
+nWidth = 2.5						! int and float mix freely in a variable
+nFlag = 4 + (bShowFrame = 1)		! a comparison is a 0/1 integer
+sLabel = "n=" + STR(nWidth, 5, 2)	! STR returns a string
+nAny = WALL_HEIGHT					! a global — type unknown, so no guessing
+addy 24 3/4"						! an imperial literal, not two numbers
+if zzyzx > 1.0 then addz 0.1		! ordering comparisons are safe on reals
+
+dim vals[]
+vals[1] = "a"
+dim vals[]							! DIM resets the array...
+vals[1] = 1							! ...so a new type here is fine
+vals[999] = 2						! dynamic arrays grow to fit any index
+
+dim grid[3][2]
+grid[3][2] = 1						! the last valid cell
+for k = 1 to 9
+	grid[k][1] = k					! a computed index cannot be judged
+next k
+
+! --- groups: ⌘-click a name to jump to where it was defined -------------------
+
+group "gr_leg"
+	block 0.05, 0.05, 0.4
+endgroup
+
+group "gr_notch"
+	addz 0.3
+	block 0.06, 0.06, 0.05
+	del 1
+endgroup
+
+grLeg = subgroup("gr_leg", "gr_notch")	! ⌘-click either name
+placegroup grLeg						! ...or `grLeg`, for the operation
+killgroup "gr_leg"
+
+! --- deliberate mistakes, to see the diagnostics ------------------------------
+
+! 1. a 2D-only command in the 3D script
+circle2 0, 0, 0.5
+
+! 2. a deprecated legacy global
+c_ = 3
+
+! 3. a variable swapping between number and string
+nWidth = "wide"
+
+! 4. a real assigned to an Integer parameter
+iDetailLevel = zzyzx / 2
+
+! 5. a dictionary key will not widen from Integer to real
+dict box
+box.x = 1
+box.x = 1.5
+
+! 6. an array inside a dictionary must hold a single type
+box.sizes[1] = 1
+box.sizes[2] = 2.5
+
+! 7. exact equality between reals is unreliable
+if zzyzx = 2.5 then addz 0.1
+
+! 8. a missing comma merges two arguments
+put 0.5, 0.25 0.75, 1
+
+! 9. a trailing comma swallows the next command
+put 1, 2, 3,
+material matBody
+
+! 10. writing past a fixed array dimension
+grid[4][1] = 0
+
+! 11. GDL arrays are 1-based
+grid[0][1] = 0
+
+! 12. an unclosed block
+if A > 1 then
+	block 1, 1, 1

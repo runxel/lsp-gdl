@@ -1,0 +1,54 @@
+# Sources and build config — the compiled `out/` folders are what ship.
+client/src/**
+server/src/**
+client/tsconfig.json
+server/tsconfig.json
+tsconfig.json
+**/*.ts
+**/*.map
+**/tsconfig.tsbuildinfo
+
+# Compiled unit tests and the type packages they need — build-time only.
+server/out/test/**
+client/node_modules/@types/**
+
+# Build output — never package a previous package.
+dist/**
+
+# Development-only material.
+.claude/**
+**/package-lock.json
+.vscode/**
+.vscode-test/**
+.github/**
+scripts/**
+data/**
+TestObject/**
+eslint.config.mjs
+notes.md
+CLAUDE.md
+.editorconfig
+.gitignore
+.DS_Store
+**/.DS_Store
+
+._*
+Thumbs.db
+.Bridge*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+**/Network Trash Folder/
+**/Temporary Items/
+.apdisk

@@ -1,0 +1,80 @@
+{
+	"name": "lsp-gdl",
+	"displayName": "GDL Language Server",
+	"description": "A language server for GDL (Geometric Description Language) for Archicad.",
+	"author": "Lucas Becker",
+	"license": "MIT",
+	"version": "0.1.8",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/runxel/lsp-gdl"
+	},
+	"publisher": "runxel",
+	"categories": [
+		"Programming Languages",
+		"Linters"
+	],
+	"keywords": [
+		"GDL",
+		"Archicad",
+		"multi-root ready"
+	],
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"activationEvents": [
+		"onLanguage:gdl-hsf"
+	],
+	"main": "./client/out/extension",
+	"extensionDependencies": [
+		"Graphisoft.gdl"
+	],
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "GDL",
+			"properties": {
+				"gdl.maxNumberOfProblems": {
+					"scope": "resource",
+					"type": "number",
+					"default": 200,
+					"description": "Maximum number of problems reported per script."
+				},
+				"gdl.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Trace the communication between VS Code and the GDL language server."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint",
+		"gen:keywords": "node scripts/gen-keywords.mjs",
+		"prepackage": "node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\"",
+		"package": "vsce package --out dist/",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"pretest": "npm run compile",
+		"test": "node --test \"server/out/test/*.test.js\""
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@stylistic/eslint-plugin": "^2.9.0",
+		"@types/mocha": "^10.0.6",
+		"@types/node": "^22",
+		"@vscode/vsce": "^3.9.2",
+		"eslint": "^9.13.0",
+		"mocha": "^10.3.0",
+		"typescript": "^5.9.2",
+		"typescript-eslint": "^8.39.0"
+	}
+}

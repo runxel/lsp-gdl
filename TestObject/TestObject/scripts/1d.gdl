@@ -1,0 +1,10 @@
+! ––– MASTER script ––– !
+! Runs before every other script, so anything defined here is visible
+! everywhere. Renaming `gDetailFactor` must therefore reach all scripts.
+
+gDetailFactor = 1
+if iDetailLevel > 1 then gDetailFactor = 2
+
+! Leading underscore marks a name as private to this script by convention:
+! GDL still shares it, but it is not offered as a completion elsewhere.
+_scratchAngle = 45

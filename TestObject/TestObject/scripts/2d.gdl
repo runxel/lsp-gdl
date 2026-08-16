@@ -1,0 +1,15 @@
+! ––– 2D script ––– !
+! `count` here is a DIFFERENT variable from the `count` in 3d.gdl —
+! the two scripts do not share a namespace. Renaming one must not touch
+! the other.
+
+count = 4
+for i = 1 to count
+	hotspot2 A * i / count, 0
+next i
+
+if bShowFrame then rect2 0, 0, A, B
+
+group "not_here"
+	!...
+endgroup

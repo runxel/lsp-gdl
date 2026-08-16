@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset = utf-8
+indent_style = tab
+indent_size = 4
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Shell scripts must stay LF or they break on macOS/Linux.
+[*.sh]
+end_of_line = lf
+
+# Generated / vendored data: leave as produced.
+[server/src/data/*.generated.ts]
+trim_trailing_whitespace = false
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2

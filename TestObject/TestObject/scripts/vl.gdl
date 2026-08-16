@@ -1,0 +1,27 @@
+! ––– PARAM script ––– !
+! Parameter names appear here both as bare identifiers and as string
+! literals — a rename has to update both spellings.
+
+values "iDetailLevel", 1, 2, 3
+
+if iDetailLevel = 1 then
+	bShowFrame = 0
+	parameters bShowFrame = bShowFrame
+	lock "bShowFrame"
+	hideparameter "matBody"			! both exist — no complaint
+	lock all "A", "B"				! names after ALL are exceptions, still checked
+endif
+
+! --- deliberate mistakes ------------------------------------------------------
+! paramlist.xml is the complete parameter list — inherited parameters arrive in
+! it as fixed entries — so a name missing from it does not exist.
+
+lock "bShowFrmae"					! typo: no such parameter
+hideparameter "iDetailLvl"			! typo: no such parameter
+parameters nSegments = 4			! never declared in paramlist.xml
+values "iDetailLvl" 1, 2, 3			! typo again, this time in VALUES
+values{2} "bShowFrmae" 0, "off", 1, "on"
+
+lock "ac_bottomlevel"				! a fix named parameter — always accepted
+lock "prefix_" + STR(iDetailLevel, 1, 0)	! computed name — cannot be judged
+values "matBody" "brick", "timber"	! only the FIRST argument names a parameter

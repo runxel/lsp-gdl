@@ -1,0 +1,20 @@
+{
+	"name": "lsp-gdl-server",
+	"description": "GDL language server.",
+	"version": "0.1.0",
+	"author": "Lucas Becker",
+	"license": "MIT",
+	"engines": {
+		"node": "*"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/runxel/lsp-gdl"
+	},
+	"dependencies": {
+		"vscode-languageserver": "^9.0.1",
+		"vscode-languageserver-textdocument": "^1.0.11",
+		"vscode-uri": "^3.0.8"
+	},
+	"scripts": {}
+}
