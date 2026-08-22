@@ -99,3 +99,7 @@ grid[0][1] = 0
 ! 12. an unclosed block
 if A > 1 then
 	block 1, 1, 1
+
+! 13. unbalanced parenthesis
+abc = atn(_stich / ccenters.c[1].x))
+abc = atn(_stich / ccenters.c[1].x

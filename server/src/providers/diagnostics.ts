@@ -1,7 +1,7 @@
 /**
  * Diagnostics for GDL.
  *
- * Four checks ship in v0, chosen because each catches a mistake that is both
+ * Five checks ship in v0, chosen because each catches a mistake that is both
  * common and invisible until Archicad refuses to open the object:
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
@@ -10,6 +10,7 @@
  *      the parameter script.
  *   3. Unterminated string literals.
  *   4. An operator left without an operand — `1 + + 2`.
+ *   5. Brackets left unbalanced — `atn(a / b[1]))`.
  *
  * Deliberately NOT checked yet: undefined variables. GDL lets Archicad inject
  * names from several directions (fixed parameters, macro `PARAMETERS ALL`,
@@ -28,6 +29,7 @@ import { provideCommaDiagnostics } from './commas';
 import { provideArrayDiagnostics } from './arrays';
 import { provideParameterRefDiagnostics } from './paramRefs';
 import { provideOperatorDiagnostics } from './operators';
+import { provideParenDiagnostics } from './parens';
 
 export const SOURCE = 'gdl';
 
@@ -230,6 +232,7 @@ export function provideDiagnostics(
 		...checkBlocks(doc, td),
 		...checkScriptContext(doc, td),
 		...provideOperatorDiagnostics(doc, td),
+		...provideParenDiagnostics(doc, td),
 		...provideCommaDiagnostics(doc, td),
 		...provideArrayDiagnostics(doc, td),
 		...provideParameterRefDiagnostics(doc, td),

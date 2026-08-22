@@ -4,6 +4,9 @@
 
 values "iDetailLevel", 1, 2, 3
 
+values "iDetailLevel", 	range[1, 10)
+
+
 if iDetailLevel = 1 then
 	bShowFrame = 0
 	parameters bShowFrame = bShowFrame
