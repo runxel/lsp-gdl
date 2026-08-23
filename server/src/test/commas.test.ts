@@ -93,3 +93,54 @@ test('a macro call listing named arguments per line is not flagged', () => {
 		[],
 	);
 });
+
+// --- stranded arguments -----------------------------------------------------
+
+test('a list left standing by a missing comma is flagged', () => {
+	// The comma after `_prf[ii + 2]` is missing, so the statement ends there and
+	// `_srf` — a name and nothing else — is left as a statement of its own.
+	assert.deepEqual(check('put \\\n\t_prf[ii],\n\t_prf[ii + 1],\n\t_prf[ii + 2]\n\t_srf'), [
+		'Missing comma — `_srf` on the next line reads as a statement of its own rather than the next argument.',
+	]);
+	assert.deepEqual(check('prism_ 3, 0.4,\n\t0, 0, s\n\t1, 1, s'), [
+		'Missing comma — `1` on the next line reads as a statement of its own rather than the next argument.',
+	]);
+});
+
+test('every stranded row of a coordinate list is reported', () => {
+	// The stranded remains of a list can strand the next row in turn, so two
+	// missing commas must give two reports rather than one.
+	assert.deepEqual(check('prism_ 3, 0.4,\n\t0, 0, s\n\t1, 1, s\n\t2, 2, s').length, 2);
+});
+
+test('a correctly wrapped list is not flagged', () => {
+	assert.deepEqual(check('prism_ 3, 0.4,\n\t0, 0, s,\n\t1, 1, s'), []);
+	// The next line is a command, so nothing was stranded.
+	assert.deepEqual(check('put 1, 2, 3\naddz 1'), []);
+	assert.deepEqual(check('put 1, 2, 3\nx = 4'), []);
+	assert.deepEqual(check('put 1, 2, 3\n"routine":'), []);
+});
+
+test('DEFINE lines in a row are commands, not stranded values', () => {
+	// The keyword table indexes `DEFINE STYLE{2}` whole, so `DEFINE` on its own
+	// is not a keyword — which made a run of them read as two lists of values.
+	assert.deepEqual(check('define style{2} "a" f, s, 0\ndefine style{2} "b" f, s, 1'), []);
+	assert.deepEqual(check('define material "m" 4, 0.95, 0.95\ndefine material "n" 4, 0.5, 0.5'), []);
+});
+
+test('a PARAGRAPH body is written as bare values by design', () => {
+	assert.deepEqual(
+		check('paragraph "p" 2, 0, 0, 0, 1\n\tpen 3\n\tstr(x, 1, 0)\n\t"\\n"\n\tname[i]\nendparagraph'),
+		[],
+	);
+});
+
+test('a gap in the text is too weak a signal to judge', () => {
+	// A blank or commented-out line between the two is not the shape a dropped
+	// comma leaves behind.
+	assert.deepEqual(check('put 1, 2, 3\n\nfoo'), []);
+	assert.deepEqual(check('put 1, 2, 3\n! note\nfoo'), []);
+	// `MATERIAL` takes one argument and could never have continued, so telling
+	// anyone to put a comma after it would be wrong.
+	assert.deepEqual(check('material gs_mat\nfoo'), []);
+});

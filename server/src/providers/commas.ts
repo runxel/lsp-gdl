@@ -2,12 +2,23 @@
  * Comma mistakes in GDL argument lists.
  *
  * GDL statements take long, positional, comma-separated argument lists that
- * routinely run across a dozen lines. Two comma slips are easy to make and
- * unpleasant to debug, because neither is a syntax error:
+ * routinely run across a dozen lines. Three comma slips are easy to make and
+ * unpleasant to debug, because none of them is a syntax error:
  *
  *   **A missing comma** merges two arguments. `PUT 0.815  0.1650, 1` quietly
  *   passes fewer values than intended, and the shape comes out wrong far from
  *   where the typo is.
+ *
+ *   **A missing comma at a line break** does something worse. The trailing comma
+ *   is what holds a wrapped list together, so dropping one *ends* the statement
+ *   and leaves the rest of the list standing on its own:
+ *
+ *       PUT _prf[ii],
+ *           _prf[ii + 1]
+ *           _srf
+ *
+ *   `PUT` gets two of its three values, and `_srf` becomes a statement that
+ *   names something and does nothing with it.
  *
  *   **A stray trailing comma** swallows the next line. Because a trailing comma
  *   continues a statement, this:
@@ -17,7 +28,7 @@
  *
  *   is one statement, and the `MATERIAL` command never runs as a command.
  *
- * Both checks are deliberately narrow. A GDL command list can hold almost
+ * All three checks are deliberately narrow. A GDL command list can hold almost
  * anything, so we only speak up where the reading is unambiguous.
  */
 
@@ -25,7 +36,7 @@ import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument, Statement } from '../gdl/analyzer';
 import type { Token } from '../gdl/lexer';
-import { lookup } from '../gdl/keywords';
+import { KEYWORDS, lookup, lookupWithVariants } from '../gdl/keywords';
 
 export const SOURCE = 'gdl';
 
@@ -208,11 +219,137 @@ function checkTrailingCommas(stmt: Statement, text: string, td: TextDocument): D
 	return diagnostics;
 }
 
+/**
+ * Operator characters that can stand inside an ordinary value expression.
+ *
+ * `=` and `:` are the two that matter by their absence: they mark an assignment
+ * and a jump label, which is how a statement that merely *begins* with a value
+ * is told apart from one that is nothing but a value.
+ */
+const EXPRESSION_OPERATORS = new Set([
+	'+', '-', '*', '/', '^', '**',
+	'(', ')', '[', ']', ',', '.',
+	'<', '>', '<=', '>=', '<>', '#', '&', '|', '@',
+]);
+
+/**
+ * First words of the statements the keyword table indexes whole, because they
+ * are spelled with a space: `DEFINE STYLE{2}`, `DEL TOP`, `REF COMPONENT`. Left
+ * to `lookup`, `DEFINE` is not a keyword at all — which is why `PUT` sees a
+ * `DEFINE MATERIAL` line as a list of values.
+ *
+ * The list also carries a few entries sectioned as statements that are really
+ * function calls (`IND(MATERIAL, "…")`), so only real identifiers are taken.
+ */
+const COMMAND_FIRST_WORDS = new Set(
+	KEYWORDS.filter((kw) => kw.kind === 'statement' && kw.name.includes(' '))
+		.map((kw) => kw.name.slice(0, kw.name.indexOf(' ')).toLowerCase())
+		.filter((word) => /^[a-z_][a-z0-9_]*$/.test(word)),
+);
+
+/**
+ * True when the token names a command.
+ *
+ * Stricter than `isSyntaxWord` about where it looks: variant spellings are
+ * indexed under their full name, so `STYLE{2}` has to fall back to `STYLE`.
+ */
+function isCommandWord(tok: Token): boolean {
+	if (tok.type !== 'identifier') return false;
+	if (COMMAND_FIRST_WORDS.has(tok.lower)) return true;
+	return lookupWithVariants(tok.text)?.kind === 'statement';
+}
+
+/** A statement consisting of nothing but a value expression. */
+function isBareExpression(stmt: Statement): boolean {
+	if (stmt.tokens.length === 0) return false;
+	for (const tok of stmt.tokens) {
+		if (tok.type === 'operator') {
+			if (!EXPRESSION_OPERATORS.has(tok.text)) return false;
+			continue;
+		}
+		if (!isValue(tok) || isCommandWord(tok)) return false;
+	}
+	return true;
+}
+
+/**
+ * True when a statement could have carried on onto the next line — a command
+ * with a comma-separated argument list, or the stranded remains of one.
+ *
+ * The comma is what the message is about, so one has to be there: `MATERIAL
+ * gs_mat` takes a single argument and could never continue, and telling someone
+ * to put a comma after it would be wrong.
+ */
+function looksUnfinished(stmt: Statement): boolean {
+	const toks = stmt.tokens;
+	if (toks.length < 2) return false;
+
+	const last = toks[toks.length - 1];
+	const endsOnValue =
+		isValue(last) || (last.type === 'operator' && (last.text === ']' || last.text === ')'));
+	if (!endsOnValue) return false;
+
+	if (!toks.some((t) => t.type === 'operator' && t.text === ',')) return false;
+
+	// Either a command taking arguments, or a stranded line of them — so that a
+	// list with two missing commas reports both.
+	if (isCommandWord(toks[0])) return true;
+	return isBareExpression(stmt);
+}
+
+/**
+ * A line of arguments left stranded by a missing comma.
+ *
+ * A trailing comma is what joins an argument list across lines, so forgetting
+ * one does not merge two values the way `checkMissingCommas` assumes — it *ends*
+ * the statement, and the rest of the list is left standing on its own:
+ *
+ *     PUT _prf[ii],
+ *         _prf[ii + 1]        <- comma missing here
+ *         _srf                <- so this is a statement in its own right
+ *
+ * `_srf` is then a statement that consists of nothing but a value, which GDL has
+ * no use for: it names something and does nothing with it. That is the tell, and
+ * it can only be read by looking at the statement *before* it, which is why this
+ * runs over pairs rather than inside one statement.
+ *
+ * Deliberately narrow: the two statements must be on consecutive lines (a blank
+ * or commented-out line in between is a much weaker signal), and the first must
+ * hold a comma already.
+ */
+function checkStrandedArguments(doc: GdlDocument, td: TextDocument): Diagnostic[] {
+	const diagnostics: Diagnostic[] = [];
+	// A PARAGRAPH body is written as bare expressions — one per line, no commas
+	// — so every line of one has exactly the shape this check reports.
+	let inParagraph = false;
+	for (let i = 1; i < doc.statements.length; i++) {
+		const stmt = doc.statements[i];
+		const prev = doc.statements[i - 1];
+		if (prev.head === 'paragraph') inParagraph = true;
+		else if (prev.head === 'endparagraph') inParagraph = false;
+		if (inParagraph) continue;
+		if (!isBareExpression(stmt) || !looksUnfinished(prev)) continue;
+		if (td.positionAt(prev.end).line + 1 !== td.positionAt(stmt.start).line) continue;
+
+		const first = stmt.tokens[0];
+		diagnostics.push({
+			severity: DiagnosticSeverity.Warning,
+			range: { start: td.positionAt(prev.end), end: td.positionAt(first.end) },
+			message:
+				`Missing comma — \`${first.text}\` on the next line reads as a statement of its ` +
+				`own rather than the next argument.`,
+			source: SOURCE,
+		});
+	}
+	return diagnostics;
+}
+
 export function provideCommaDiagnostics(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 	for (const stmt of doc.statements) {
 		diagnostics.push(...checkMissingCommas(stmt, td));
 		diagnostics.push(...checkTrailingCommas(stmt, doc.text, td));
 	}
+	diagnostics.push(...checkStrandedArguments(doc, td));
 	return diagnostics;
 }
