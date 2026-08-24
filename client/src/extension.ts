@@ -3,9 +3,18 @@
  */
 
 import * as path from 'path';
-import { extensions, workspace, ExtensionContext, Uri } from 'vscode';
+import {
+	commands,
+	extensions,
+	window,
+	workspace,
+	ExtensionContext,
+	Uri,
+	WorkspaceEdit,
+} from 'vscode';
 
 import {
+	DocumentFormattingRequest,
 	LanguageClient,
 	LanguageClientOptions,
 	ServerOptions,
@@ -50,6 +59,40 @@ export function activate(context: ExtensionContext) {
 
 	client = new LanguageClient('gdl', 'GDL Language Server', serverOptions, clientOptions);
 	client.start();
+
+	context.subscriptions.push(commands.registerCommand('gdl.alignArgumentLists', alignArgumentLists));
+}
+
+/**
+ * `GDL: Align argument lists` — the same edits Format Document produces, asked
+ * for by name.
+ *
+ * It goes straight to our server rather than through `editor.action.formatDocument`
+ * because VS Code allows one default formatter per language: if anything else
+ * ever registers for `gdl-hsf`, the built-in command would run that one instead,
+ * and a command called "align argument lists" doing something else entirely is
+ * the worst outcome available.
+ */
+async function alignArgumentLists(): Promise<void> {
+	const editor = window.activeTextEditor;
+	if (!editor || editor.document.languageId !== 'gdl-hsf') return;
+	if (!client?.isRunning()) return;
+
+	const document = editor.document;
+	const edits = await client.sendRequest(DocumentFormattingRequest.type, {
+		textDocument: client.code2ProtocolConverter.asTextDocumentIdentifier(document),
+		// The editor's own settings, so the padding matches the file it lands in.
+		options: {
+			tabSize: Number(editor.options.tabSize) || 4,
+			insertSpaces: editor.options.insertSpaces === true,
+		},
+	});
+	if (!edits?.length) return;
+
+	// One workspace edit, so the whole alignment is a single undo step.
+	const workspaceEdit = new WorkspaceEdit();
+	workspaceEdit.set(document.uri, await client.protocol2CodeConverter.asTextEdits(edits));
+	await workspace.applyEdit(workspaceEdit);
 }
 
 export function deactivate(): Thenable<void> | undefined {

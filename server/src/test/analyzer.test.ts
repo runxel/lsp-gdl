@@ -44,6 +44,14 @@ test('both label spellings are collected', () => {
 	assert.deepEqual([...doc.labels.keys()].sort(), ['100', 'namedroutine']);
 });
 
+test('a label ends its own statement', () => {
+	// `500:\tLINE2 0, -body_wid, 0` — code written after a label on the same
+	// line is a statement of its own, and the label still reads as a label.
+	const doc = analyze(URI_3D, '500:\tline2 0, -0.1, 0');
+	assert.deepEqual([...doc.labels.keys()], ['500']);
+	assert.deepEqual(doc.statements.map((s) => s.head), [undefined, 'line2']);
+});
+
 test('CALL records the macro dependency', () => {
 	const doc = analyze(URI_3D, 'call "Wall Macro" parameters all');
 	assert.deepEqual(doc.macroCalls.map((m) => m.name), ['Wall Macro']);

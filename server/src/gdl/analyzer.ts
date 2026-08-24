@@ -106,6 +106,12 @@ function splitStatements(tokens: readonly Token[]): Statement[] {
 				flush();
 				continue;
 			}
+			// A label ends its own statement, so that code written after it on
+			// the same line — `500: LINE2 0, -w, 0` — is a statement in its own
+			// right and the label still reads as a lone `name :` pair.
+			current.push(tok);
+			flush();
+			continue;
 		}
 
 		current.push(tok);

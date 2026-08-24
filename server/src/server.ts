@@ -28,6 +28,7 @@ import { provideCompletion, resolveCompletion } from './providers/completion';
 import { provideDefinition } from './providers/definition';
 import { provideHover } from './providers/hover';
 import { provideDiagnostics } from './providers/diagnostics';
+import { provideFormattingEdits, type AlignOptions } from './providers/format';
 import { provideRename, resolveRenameTarget, RenameError, type TextResolver } from './providers/rename';
 
 const connection = createConnection(ProposedFeatures.all);
@@ -97,6 +98,12 @@ connection.onInitialize((params: InitializeParams) => {
 			},
 			hoverProvider: true,
 			definitionProvider: true,
+			// Alignment only — see `providers/format.ts`. Registering it here is
+			// what gives Format Document, Format Selection and `formatOnSave`
+			// their edits; the `GDL: Align argument lists` command asks this
+			// server directly, so it works whatever the default formatter is.
+			documentFormattingProvider: true,
+			documentRangeFormattingProvider: true,
 			renameProvider: { prepareProvider: true },
 			diagnosticProvider: {
 				interFileDependencies: false,
@@ -157,7 +164,7 @@ connection.languages.diagnostics.on(async (params) => {
 	const doc = getAnalysis(textDocument);
 	return {
 		kind: DocumentDiagnosticReportKind.Full,
-		items: provideDiagnostics(doc, textDocument, settings.maxNumberOfProblems),
+		items: provideDiagnostics(doc, textDocument, settings.maxNumberOfProblems, resolveText),
 	} satisfies DocumentDiagnosticReport;
 });
 
@@ -222,6 +229,37 @@ connection.onRenameRequest((params) => {
 		}
 		throw error;
 	}
+});
+
+/**
+ * The editor's own tab settings, which the alignment padding follows.
+ *
+ * `FormattingOptions` is required by the protocol, but a client that leaves a
+ * field out should not silently get spaces in a tabs file — the repo, and every
+ * HSF script in it, is tabs at four.
+ */
+function alignOptions(options: Partial<AlignOptions> | undefined): AlignOptions {
+	return {
+		tabSize: options?.tabSize ?? 4,
+		insertSpaces: options?.insertSpaces ?? false,
+	};
+}
+
+connection.onDocumentFormatting((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return null;
+	return provideFormattingEdits(getAnalysis(textDocument), textDocument, alignOptions(params.options));
+});
+
+connection.onDocumentRangeFormatting((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return null;
+	return provideFormattingEdits(
+		getAnalysis(textDocument),
+		textDocument,
+		alignOptions(params.options),
+		params.range,
+	);
 });
 
 connection.onDidChangeWatchedFiles(() => {

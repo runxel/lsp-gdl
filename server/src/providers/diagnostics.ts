@@ -1,7 +1,7 @@
 /**
  * Diagnostics for GDL.
  *
- * Five checks ship in v0, chosen because each catches a mistake that is both
+ * Six checks ship in v0, chosen because each catches a mistake that is both
  * common and invisible until Archicad refuses to open the object:
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
@@ -11,6 +11,8 @@
  *   3. Unterminated string literals.
  *   4. An operator left without an operand — `1 + + 2`.
  *   5. Brackets left unbalanced — `atn(a / b[1]))`.
+ *   6. A `GOSUB`/`GOTO` naming a label that does not exist, which stops the
+ *      object whether or not the jump is ever reached.
  *
  * Deliberately NOT checked yet: undefined variables. GDL lets Archicad inject
  * names from several directions (fixed parameters, macro `PARAMETERS ALL`,
@@ -30,6 +32,8 @@ import { provideArrayDiagnostics } from './arrays';
 import { provideParameterRefDiagnostics } from './paramRefs';
 import { provideOperatorDiagnostics } from './operators';
 import { provideParenDiagnostics } from './parens';
+import { provideLabelDiagnostics } from './labels';
+import type { TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
 
@@ -226,6 +230,10 @@ export function provideDiagnostics(
 	doc: GdlDocument,
 	td: TextDocument,
 	maxProblems: number,
+	// Supplies unsaved editor text for sibling scripts; the label check reads
+	// the master script through it. Defaulted so callers with nothing open —
+	// the tests, the corpus sweep — fall back to what is on disk.
+	resolve: TextResolver = () => undefined,
 ): Diagnostic[] {
 	return [
 		...checkStrings(doc, td),
@@ -233,6 +241,7 @@ export function provideDiagnostics(
 		...checkScriptContext(doc, td),
 		...provideOperatorDiagnostics(doc, td),
 		...provideParenDiagnostics(doc, td),
+		...provideLabelDiagnostics(doc, td, resolve),
 		...provideCommaDiagnostics(doc, td),
 		...provideArrayDiagnostics(doc, td),
 		...provideParameterRefDiagnostics(doc, td),
