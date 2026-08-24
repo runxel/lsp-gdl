@@ -155,6 +155,22 @@ test('backslashes on several rows line up with each other', () => {
 	);
 });
 
+test('a lone backslash is not dragged out to meet a distant one', () => {
+	// Reported on a real `CALL`: the two `\\`s head separate sub-lists seven rows
+	// apart, so pulling the first out to the width of `returned_parameters`
+	// aligned it with nothing the eye can follow. A `\\` marks the row below as
+	// belonging to this one, so it only ever lines up with an adjacent one.
+	const text = [
+		'call "aol_cct",',
+		'\tparameters\t\t\t\\',
+		'\t\trad1 = rad_main,',
+		'\t\ty2 = -(tap_len-rad_c2),',
+		'\t\treturned_parameters\t\\',
+		'\t\t\tsuccess, _cctres',
+	].join('\n');
+	assert.equal(format(text, TABS), text);
+});
+
 test('trailing comments get a column of their own', () => {
 	assert.equal(
 		format(['put 1, 2, ! first', '    3333, 4 ! second'].join('\n')),

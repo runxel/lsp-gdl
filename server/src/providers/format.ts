@@ -27,8 +27,15 @@
  *   - **A column of one is left as written.** Alignment needs two rows to line
  *     up. That is what keeps the idiomatic `put \` on the head line where it
  *     is, rather than dragging it out to the width of the table below; where
- *     several rows carry a `\` — the multi-line `if a | \` condition — they
- *     line up with each other, and with nothing else. Comments the same.
+ *     several adjacent rows carry a `\` — the multi-line `if a | \` condition
+ *     — they line up with each other, and with nothing else. Comments the same,
+ *     bar the adjacency, for which see the next rule.
+ *   - **A `\` lines up only within an unbroken run of them.** Unlike a comment,
+ *     which annotates the row it sits on, a `\` says the row *below* belongs to
+ *     this one, so a pair of them draws a visible edge only where their rows
+ *     adjoin. Any row without one breaks that edge, and the markers either side
+ *     of the break have nothing to line up with. See `runsOf` and the note in
+ *     `layout`.
  *   - **Indentation is the author's.** Column 0 is never moved, so the columns
  *     after it are computed from where each row actually starts.
  *   - **Padding follows the editor.** `insertSpaces` decides tabs or spaces and
@@ -253,6 +260,27 @@ function readTail(row: Row, text: string): boolean {
 	return true;
 }
 
+/**
+ * The maximal runs of adjacent rows satisfying `has`, as index lists.
+ *
+ * Adjacency is counted over the rows of the statement rather than the lines of
+ * the file, so a commented-out line inside a continuation — a no-op the lexer
+ * runs straight through, and never a row — does not break a run in two.
+ */
+function runsOf(rows: readonly Row[], has: (r: Row) => boolean): number[][] {
+	const runs: number[][] = [];
+	let run: number[] | undefined;
+	rows.forEach((r, i) => {
+		if (!has(r)) {
+			run = undefined;
+			return;
+		}
+		if (!run) runs.push((run = []));
+		run.push(i);
+	});
+	return runs;
+}
+
 /** A whitespace stretch to be rewritten. */
 interface Gap {
 	readonly start: number;
@@ -373,13 +401,22 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 	const lastEnd = (i: number) => endCol[i][rows[i].cells.length - 1];
 
 	// The `\` and the comment line up only with their own kind — see the note
-	// on marker columns at the top of the file.
-	const contRows = rows.map((_, i) => i).filter((i) => rows[i].cont);
-	const contCol = columnOf(contRows, lastEnd);
+	// on marker columns at the top of the file. A `\` goes further and lines up
+	// only within an unbroken run of rows carrying one: it is a boundary mark,
+	// saying the row below belongs to this one, so two of them draw an edge
+	// only where their rows adjoin. A row without one breaks the edge, and
+	// pulling a `\` out to meet another seven rows down aligns it with nothing
+	// a reader can see — that was the `call … parameters \ … returned_parameters \`
+	// shape, where the first marker was dragged out to the width of the second.
+	const contTarget: (number | undefined)[] = rows.map(() => undefined);
+	for (const run of runsOf(rows, (r) => r.cont !== undefined)) {
+		const target = columnOf(run, lastEnd);
+		for (const i of run) contTarget[i] = target;
+	}
 	const contEnd = (i: number) => {
 		const cont = rows[i].cont;
 		if (!cont) return lastEnd(i);
-		const from = contCol ?? advance(text.slice(rows[i].cells[rows[i].cells.length - 1].end, cont.start), lastEnd(i), opts.tabSize);
+		const from = contTarget[i] ?? advance(text.slice(rows[i].cells[rows[i].cells.length - 1].end, cont.start), lastEnd(i), opts.tabSize);
 		return from + 1;
 	};
 	const commentRows = rows.map((_, i) => i).filter((i) => rows[i].comment);
@@ -410,7 +447,7 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 
 		let prevEnd = r.cells[r.cells.length - 1].end;
 		if (r.cont) {
-			gap(prevEnd, r.cont.start, contCol);
+			gap(prevEnd, r.cont.start, contTarget[i]);
 			out += '\\';
 			col++;
 			prevEnd = r.cont.end;
