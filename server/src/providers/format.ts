@@ -20,9 +20,10 @@
  *
  * Four rules govern it, every one of them written by the corpus:
  *
- *   - **Only a real table is aligned.** `isTable()` below; this is the rule
- *     that keeps idiomatic code from being made worse, and it is worth reading
- *     before anything else here.
+ *   - **Only a real table is aligned**, and the head row carrying the command
+ *     is judged apart from the value rows below it. `tableRows()` below; this
+ *     is the rule that keeps idiomatic code from being made worse, and it is
+ *     worth reading before anything else here.
  *   - **A column of one is left as written.** Alignment needs two rows to line
  *     up. That is what keeps the idiomatic `put \` on the head line where it
  *     is, rather than dragging it out to the width of the table below; where
@@ -62,7 +63,7 @@
  *
  * Corpus: 2448 files, 0 crashes, and — asserted over every file, in both tabs
  * and spaces — the token stream unchanged, the second run a no-op, and not one
- * line pushed past 255 characters. 858 files hold something it would align.
+ * line pushed past 255 characters. 978 files hold something it would align.
  */
 
 import type { Range, TextEdit } from 'vscode-languageserver/node';
@@ -260,7 +261,7 @@ interface Gap {
 }
 
 /**
- * Whether the rows are a table, and so worth putting in columns at all.
+ * Which rows form the table, empty when the statement holds none.
  *
  * This is the judgement the corpus forced. Aligning anything with a comma in it
  * turned idiomatic code into something worse:
@@ -269,24 +270,50 @@ interface Gap {
  *         8, "Typ 8", 9, "Typ 9", ...
  *
  * Those are not columns, they are a stream of pairs wrapped where the line ran
- * out — and the head row's first cell holds the command and the parameter name
- * besides, so it is three times the width of the `8,` below it. Lining column 1
- * up across the two put the strings 30 characters out. The same shape spoils
- * `COOR{3} 2,4,` over a matrix and `PROJECT2{4} 3,270,` over its annotated
- * argument list.
+ * out, and lining them up put the strings 30 characters from the numbers they
+ * belong to. So the value rows must actually agree: **every row carrying a
+ * comma has the same number of cells**, or none of them is moved. Rows with no
+ * comma at all — `put \` opening the statement, `then` closing it — are not
+ * part of the table and neither widen it nor get widened.
  *
- * So the rows must actually agree: every row carrying a comma has the same
- * number of cells, save the last, which may run short because that is where the
- * list ends. Rows with no comma at all — `put \` opening the statement, `then`
- * closing it — are not part of the table and neither widen it nor get widened.
+ * **The head row is judged separately**, because it is the one row that is not
+ * only values: it carries the command, and whatever arguments come before the
+ * list proper. That is the ordinary shape of a GDL table —
  *
- * Statements that fail this still have their `\` and comment columns aligned;
- * those never depended on the cells lining up.
+ *     poly2_b 5, 1+2*bDrawFill+64, gs_fill_pen, gs_back_pen,
+ *         -RAD_BLIND_SPOUT, 0,      1,
+ *         -RAD_BLIND_SPOUT, -0.007, 1,
+ *          RAD_BLIND_SPOUT, 0,      1
+ *
+ * — four cells of preamble over rows of three. Requiring the head to agree with
+ * them left every `POLY2_B`, `PRISM_`, `COOR`, `TUBE` and `EXTRUDE` in the
+ * corpus untouched, which is most of what anyone would reach for this command
+ * to do: 2860 tables in 313 files, the coordinate lists this exists for. So a
+ * head row of a different width is simply not a row of the table. The rows
+ * below line up with each other and its own spacing is left as the author wrote
+ * it, which is also what keeps it from dragging column 1 out to the width of a
+ * command — the very thing that spoiled the `VALUES{2}` above. Where the head
+ * *does* agree — `put 1, 2, 3,` over more triples — it takes part as before.
+ *
+ * The last row is held to the same width as the rest, though it is the one row
+ * that could honestly run short, the list having ended. Letting it off brought
+ * the `VALUES{2}` stream straight back: its wrapped rows agree by accident and
+ * only the remainder at the end does not, so the exemption made it a table.
+ *
+ * Statements that fail all this still have their `\` and comment columns
+ * aligned; those never depended on the cells lining up.
  */
-function isTable(rows: readonly Row[]): boolean {
-	const values = rows.filter((r) => r.cells.length > 1);
-	if (values.length < 2) return false;
-	return values.every((r) => r.cells.length === values[0].cells.length);
+function tableRows(rows: readonly Row[]): ReadonlySet<number> {
+	const none: ReadonlySet<number> = new Set();
+	const values = rows.map((_, i) => i).filter((i) => rows[i].cells.length > 1);
+	// The head is judged against the body, never the other way round.
+	const body = values.filter((i) => i !== 0);
+	if (body.length === 0) return none;
+	const width = rows[body[0]].cells.length;
+	if (!body.every((i) => rows[i].cells.length === width)) return none;
+	const table = new Set(body);
+	if (values[0] === 0 && rows[0].cells.length === width) table.add(0);
+	return table.size < 2 ? none : table;
 }
 
 /**
@@ -327,16 +354,18 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 	// Every column is measured whether or not it is aligned: the `\` and the
 	// comment sit at the end of the row, so their columns are only as good as
 	// the running width of the cells in front of them.
-	const table = isTable(rows);
+	const table = tableRows(rows);
 	const columns = Math.max(...rows.map((r) => r.cells.length));
 	const cellTarget: (number | undefined)[] = [];
 	for (let c = 1; c < columns; c++) {
-		const participants = rows.map((_, i) => i).filter((i) => rows[i].cells.length > c);
-		const target = table ? columnOf(participants, (i) => endCol[i][c - 1]) : undefined;
+		// A row outside the table is still measured — the `\` and the comment sit
+		// at the end of it — but it is neither moved nor allowed to widen a column.
+		const present = rows.map((_, i) => i).filter((i) => rows[i].cells.length > c);
+		const target = columnOf(present.filter((i) => table.has(i)), (i) => endCol[i][c - 1]);
 		cellTarget[c] = target;
-		for (const i of participants) {
+		for (const i of present) {
 			const gap = text.slice(rows[i].cells[c - 1].end, rows[i].cells[c].start);
-			startCol[i][c] = target ?? advance(gap, endCol[i][c - 1], opts.tabSize);
+			startCol[i][c] = (table.has(i) ? target : undefined) ?? advance(gap, endCol[i][c - 1], opts.tabSize);
 			endCol[i][c] = advance(cellText(rows[i], c), startCol[i][c], opts.tabSize);
 		}
 	}
@@ -374,7 +403,7 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 		};
 
 		for (let c = 1; c < r.cells.length; c++) {
-			gap(r.cells[c - 1].end, r.cells[c].start, cellTarget[c]);
+			gap(r.cells[c - 1].end, r.cells[c].start, table.has(i) ? cellTarget[c] : undefined);
 			out += cellText(r, c);
 			col = endCol[i][c];
 		}

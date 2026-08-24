@@ -84,6 +84,55 @@ test('a bracketed argument is one cell, not several', () => {
 	);
 });
 
+test('a head row carrying the command does not have to match the table', () => {
+	// `Wandarmatur AOL/2d.gdl`, and the shape of nearly every coordinate list in
+	// the corpus: four cells of preamble over rows of three. The head takes no
+	// part — its own spacing is left exactly as written — and the rows below line
+	// up with each other.
+	assert.equal(
+		format(
+			[
+				'poly2_b 5, 1+2, fill_pen, back_pen,',
+				'    -RAD, 0, 1,',
+				'    -RAD, -0.007, 1,',
+				'    RAD, 0, -1',
+			].join('\n'),
+		),
+		[
+			'poly2_b 5, 1+2, fill_pen, back_pen,',
+			'    -RAD, 0,      1,',
+			'    -RAD, -0.007, 1,',
+			'    RAD,  0,      -1',
+		].join('\n'),
+	);
+});
+
+test('...but a head row that does match still takes part', () => {
+	assert.equal(
+		format(['prism_ 3, 0.1,', '    1, 2,', '    33333, 4'].join('\n')),
+		['prism_ 3,  0.1,', '    1,     2,', '    33333, 4'].join('\n'),
+	);
+});
+
+test('the value rows themselves must still agree', () => {
+	// The head being exempt is not a licence to align a wrapped stream: these
+	// rows are pairs that ran out of line, not columns.
+	const text = [
+		'values{2} "iPanelType" 1, "Typ 1", 2, "Typ 2",',
+		'    3, "Typ 3", 4, "Typ 4", 5, "Typ 5",',
+		'    6, "Typ 6", 7, "Typ 7"',
+	].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('the last row may not run short either', () => {
+	// It is the one row that could honestly end early, but letting it off makes
+	// a table of the wrapped `VALUES` stream above, whose rows agree by accident
+	// and whose remainder is exactly this shape.
+	const text = ['put 1, 2, 3,', '    44444, 5, 6,', '    7, 8'].join('\n');
+	assert.equal(format(text), text);
+});
+
 // --- the marker columns -----------------------------------------------------
 
 test('a lone trailing backslash is not dragged out to the table width', () => {
