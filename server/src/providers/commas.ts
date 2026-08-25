@@ -189,14 +189,47 @@ function checkMissingCommas(stmt: Statement, td: TextDocument): Diagnostic[] {
 }
 
 /**
+ * True when the token at `i` heads a `name = value` named argument — the shape
+ * a macro call lists one per line:
+ *
+ *     CALL "BasicGeometry" PARAMETERS iFunction = 1,
+ *         polygon = poly
+ *
+ * The name may be a whole path (`_opt.pen = 3`, `arr[1] = 2`), so the subscripts
+ * and members are stepped over before the `=` is looked for. Nothing may be
+ * assigned to a keyword, so an `=` here proves the word is an argument name
+ * rather than the command it looks like.
+ */
+function isNamedArgument(toks: readonly Token[], i: number): boolean {
+	let j = i + 1;
+	while (j < toks.length && toks[j].type === 'operator') {
+		if (toks[j].text === '.') {
+			if (toks[j + 1]?.type !== 'identifier') return false;
+			j += 2;
+			continue;
+		}
+		if (toks[j].text !== '[') break;
+		let depth = 0;
+		while (j < toks.length) {
+			const t = toks[j];
+			if (t.type === 'operator' && (t.text === '[' || t.text === '(')) depth++;
+			else if (t.type === 'operator' && (t.text === ']' || t.text === ')')) {
+				depth--;
+				if (depth === 0) { j++; break; }
+			}
+			j++;
+		}
+		if (depth !== 0) return false;
+	}
+	return toks[j]?.type === 'operator' && toks[j].text === '=';
+}
+
+/**
  * A statement that continued across a line break onto what looks like a new
  * command — the signature of a comma that should not be there.
  */
 function checkTrailingCommas(stmt: Statement, text: string, td: TextDocument): Diagnostic[] {
 	const toks = stmt.tokens;
-	// Macro calls legitimately list `name = value` pairs one per line.
-	if (stmt.head === 'call') return [];
-
 	const diagnostics: Diagnostic[] = [];
 	for (let i = 1; i < toks.length; i++) {
 		const tok = toks[i];
@@ -205,7 +238,7 @@ function checkTrailingCommas(stmt: Statement, text: string, td: TextDocument): D
 		if (!isSyntaxWord(tok) || !atLineStart(text, tok)) continue;
 		if (CLAUSE_CONTINUATIONS.has(tok.lower)) continue;
 		// `name = value` is a named argument that merely shares a keyword's name.
-		if (toks[i + 1]?.type === 'operator' && toks[i + 1].text === '=') continue;
+		if (isNamedArgument(toks, i)) continue;
 
 		diagnostics.push({
 			severity: DiagnosticSeverity.Warning,

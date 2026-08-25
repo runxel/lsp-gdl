@@ -92,6 +92,24 @@ test('a macro call listing named arguments per line is not flagged', () => {
 		check('call "BasicGeometry" parameters iFunction = 1,\n\tpolygon = poly,\n\tlineA = ln'),
 		[],
 	);
+	// A macro parameter may be named after a command and may be a whole path;
+	// the `=` is what tells an argument name from the command it looks like.
+	assert.deepEqual(check('call "m" parameters a = 1,\n\tmaterial = 3,\n\tpen = 4'), []);
+	assert.deepEqual(check('call "m" parameters a = 1,\n\tstyle[1] = 3,\n\tgroup.pen = 4'), []);
+});
+
+test('a trailing comma ending a macro call is flagged', () => {
+	// Reported by the project owner: the comma after the last named argument
+	// swallows `DEL 1`, so the transformation is never popped.
+	assert.deepEqual(
+		check(
+			'call "aolm_tap_handle",\n\tparameters all,\n\t\ti_style = i_tap_style,' +
+				'\n\t\ttap_depth = height_handle,\ndel 1',
+		),
+		[
+			'Trailing comma — `del` on the next line reads as another argument rather than a new statement.',
+		],
+	);
 });
 
 // --- stranded arguments -----------------------------------------------------
