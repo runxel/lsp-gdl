@@ -29,6 +29,20 @@
  *     touches. Only the strings GDL actually reads as a group are rewritten —
  *     a `TEXT2 0, 0, "gr_leg"` in the same script is prose and stays put.
  *
+ * **Jump labels** — GDL's subroutines — are the other string-named thing, and
+ * they scope like neither. A jump reaches its own script *plus the master*, so
+ * a subroutine written in `1d.gdl` is renamed across the whole part while one
+ * written anywhere else never leaves its file. Three spellings are rewritten:
+ * the definition `"draw handle":`, every `GOSUB` / `GOTO` naming it, and the
+ * assignment that hands the name to a variable the script jumps through
+ * (`_substr = "EndBlock"` … `GOSUB _substr`). See `gdl/labels.ts`.
+ *
+ * A **numeric** label is refused, which is the one place this file declines a
+ * name it can see. `100:` is jumped to arithmetically (`GOSUB 100 + idx`,
+ * `GOSUB i_type * 10`) and aliased through constants (`COUNT_OFFSET = 107`),
+ * and neither shape can be rewritten — a rename would leave the object broken
+ * in the way this server exists to prevent.
+ *
  * Names Archicad owns — keywords, globals, and fixed parameters such as `A`,
  * `zzyzx` or `ac_bottomlevel` — are refused outright.
  */
@@ -45,6 +59,14 @@ import { analyze, tokenAt, type GdlDocument } from '../gdl/analyzer';
 import { lookup } from '../gdl/keywords';
 import { libPartFor, libPartScripts, paramListPath, type GdlParameter } from '../gdl/libpart';
 import { groupNameAt, groupNames, type GroupName } from '../gdl/groups';
+import {
+	labelDefinitionKeys,
+	labelKey,
+	labelSitesFor,
+	labelSiteAt,
+	type LabelSite,
+} from '../gdl/labels';
+import { masterScriptFor } from '../gdl/masterScript';
 import { URI } from 'vscode-uri';
 import { readFileSync } from 'node:fs';
 
@@ -65,6 +87,16 @@ const IDENTIFIER_RE = /^[A-Za-z_~][A-Za-z0-9_]*$/;
  */
 const BAD_IN_GROUP_NAME = /["'`\r\n]/;
 
+/**
+ * What a label name may not hold — the same two things as a group name, and
+ * for the same reasons: a label is a string too, so `"simple tap style"` is a
+ * perfectly good subroutine name.
+ */
+const BAD_IN_LABEL_NAME = BAD_IN_GROUP_NAME;
+
+/** A name GDL would read as a *numeric* label, whatever the quotes say. */
+const NUMERIC_NAME = /^\d+(\.\d+)?$/;
+
 export class RenameError extends Error {}
 
 interface RenameTarget {
@@ -73,6 +105,8 @@ interface RenameTarget {
 	readonly parameter?: GdlParameter;
 	/** Set when the cursor is on a group named by a string literal. */
 	readonly group?: GroupName;
+	/** Set when the cursor is on a jump label — its definition, or a jump. */
+	readonly label?: LabelSite;
 	/** Rename across the whole library part rather than this file alone. */
 	readonly projectWide: boolean;
 }
@@ -85,6 +119,26 @@ function readText(uri: string, resolve: TextResolver): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * How far a label rename must reach.
+ *
+ * A jump sees its own script and the master script, so a subroutine defined in
+ * `1d.gdl` belongs to the whole library part while one defined anywhere else
+ * never leaves its file. A script that defines a label of its own name shadows
+ * the master's, which keeps the rename out of it entirely — the corpus holds no
+ * such collision, but a silent merge of two subroutines is not a risk worth
+ * taking on a coincidence.
+ *
+ * A jump that resolves to nothing — the leftover `providers/labels.ts` reports
+ * — stays in its own file too. There is no definition to follow anywhere.
+ */
+function labelReachesWholePart(doc: GdlDocument, key: string, resolve: TextResolver): boolean {
+	if (!libPartFor(doc.uri)) return false;
+	if (labelDefinitionKeys(doc).has(key)) return doc.script === '1d';
+	const master = masterScriptFor(doc.uri, doc.script, resolve);
+	return master ? labelDefinitionKeys(master).has(key) : false;
 }
 
 /**
@@ -118,9 +172,37 @@ export function resolveRenameTarget(
 		};
 	}
 
+	// A jump label, the other name spelt as a string rather than an identifier.
+	// Only where GDL reads the string as a label: its definition, a `GOSUB` /
+	// `GOTO` naming it, or the assignment that hands it to a variable jumped
+	// through. Prose that merely matches is left alone, as with a group.
+	const label = labelSiteAt(doc, offset);
+	if (label) {
+		if (label.spelling === 'numeric') {
+			throw new RenameError(
+				`\`${label.token.text}\` is a numeric jump label and cannot be renamed safely. ` +
+					'Numeric labels are reached by arithmetic (`GOSUB 100 + idx`) and through ' +
+					'constants (`COUNT_OFFSET = 107`), and neither can be rewritten — the rename ' +
+					'would leave the object jumping to a label that no longer exists.',
+			);
+		}
+		const inner = label.token.text.slice(1, -1);
+		return {
+			name: inner,
+			range: Range.create(
+				td.positionAt(label.token.start + 1),
+				td.positionAt(label.token.end - 1),
+			),
+			label,
+			projectWide: labelReachesWholePart(doc, label.key, resolve),
+		};
+	}
+
 	const token = tokenAt(doc, offset);
 	if (!token || token.type !== 'identifier') {
-		throw new RenameError('Only variables, parameters and groups can be renamed.');
+		throw new RenameError(
+			'Only variables, parameters, groups and jump labels can be renamed.',
+		);
 	}
 
 	// A dotted name (`pt.start`) renames only its leading segment.
@@ -273,6 +355,98 @@ function renameGroup(
 	return { changes: { [doc.uri]: edits } };
 }
 
+/**
+ * Rewrites every string that names this label — its definition, the jumps to
+ * it, and the assignments that hand the name to a variable jumped through.
+ *
+ * The edit lands *inside* the quotes, so whichever delimiter the author used at
+ * each site survives; the same routine is quite often `"draw"` on one line and
+ * `'draw'` on the next, single quotes being how a `"` is embedded elsewhere.
+ */
+function renameLabel(
+	doc: GdlDocument,
+	td: TextDocument,
+	label: LabelSite,
+	projectWide: boolean,
+	newName: string,
+	resolve: TextResolver,
+): WorkspaceEdit {
+	if (!newName) {
+		throw new RenameError('A jump label cannot be empty.');
+	}
+	if (BAD_IN_LABEL_NAME.test(newName)) {
+		throw new RenameError('A jump label cannot contain a quote mark or a line break.');
+	}
+	// `"100":` and `100:` are the same label to `GOSUB 100`, which resolves a
+	// numeric target by value — so a named label must not become a number, or
+	// it would answer jumps meant for a numeric one and vice versa.
+	if (NUMERIC_NAME.test(newName)) {
+		throw new RenameError(
+			`\`${newName}\` would read as a numeric jump label, which \`GOSUB\` matches by ` +
+				'value — give the subroutine a name that is not a number.',
+		);
+	}
+
+	const newKey = labelKey(newName);
+	const libpart = libPartFor(doc.uri);
+
+	/** Every script the rename may touch, the current document included. */
+	const scripts = projectWide && libpart ? libPartScripts(libpart.root) : [];
+
+	// The new name must not already be a subroutine a jump in reach could mean.
+	// For a script-local label that is this script and the master; for one the
+	// master publishes it is every script of the part, since renaming onto a
+	// sibling's own label would put two subroutines behind one name there.
+	// Re-spelling a name in another case keeps its key, and so can never clash.
+	const refuseIfTaken = (other: GdlDocument, where: string) => {
+		if (newKey === label.key) return;
+		if (!labelDefinitionKeys(other).has(newKey)) return;
+		throw new RenameError(
+			`\`${newName}\` is already a jump label in ${where} — two subroutines cannot ` +
+				'share a name where one jump could mean either.',
+		);
+	};
+
+	refuseIfTaken(doc, 'this script');
+	if (scripts.length === 0) {
+		const master = masterScriptFor(doc.uri, doc.script, resolve);
+		if (master) refuseIfTaken(master, 'the master script');
+	}
+
+	const editsFor = (scriptDoc: GdlDocument, scriptTd: TextDocument): TextEdit[] =>
+		labelSitesFor(scriptDoc, label.key).map((site) =>
+			TextEdit.replace(
+				Range.create(
+					scriptTd.positionAt(site.token.start + 1),
+					scriptTd.positionAt(site.token.end - 1),
+				),
+				newName,
+			),
+		);
+
+	if (scripts.length === 0) {
+		return { changes: { [doc.uri]: editsFor(doc, td) } };
+	}
+
+	const changes: Record<string, TextEdit[]> = {};
+	for (const script of scripts) {
+		const text = script.uri === doc.uri ? td.getText() : readText(script.uri, resolve);
+		if (text === undefined) continue;
+		const scriptDoc = script.uri === doc.uri ? doc : analyze(script.uri, text);
+
+		// A script with a label of its own by this name resolves its jumps
+		// there, so they are not ours to rewrite.
+		if (script.kind !== '1d' && labelDefinitionKeys(scriptDoc).has(label.key)) continue;
+		refuseIfTaken(scriptDoc, `\`${script.kind}.gdl\``);
+
+		const scriptTd =
+			script.uri === doc.uri ? td : TextDocument.create(script.uri, 'gdl-hsf', 0, text);
+		const edits = editsFor(scriptDoc, scriptTd);
+		if (edits.length) changes[script.uri] = edits;
+	}
+	return { changes };
+}
+
 export function provideRename(
 	doc: GdlDocument,
 	td: TextDocument,
@@ -283,11 +457,12 @@ export function provideRename(
 	const trimmed = newName.trim();
 
 	// What makes a valid new name depends on what is being renamed, so the
-	// target is resolved first — a group name is a string and answers to none
-	// of the rules an identifier does.
+	// target is resolved first — a group and a jump label are strings, and
+	// answer to none of the rules an identifier does.
 	const target = resolveRenameTarget(doc, td, position, resolve);
 
 	if (target.group) return renameGroup(doc, td, target.group, trimmed);
+	if (target.label) return renameLabel(doc, td, target.label, target.projectWide, trimmed, resolve);
 
 	if (!IDENTIFIER_RE.test(trimmed)) {
 		throw new RenameError(

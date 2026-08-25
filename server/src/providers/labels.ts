@@ -25,53 +25,21 @@
  * `GOSUB 10 + idx`, `GOSUB i_type * 10`, `GOSUB _subid[type_head_1]` — none of
  * which can be resolved without running the script. As elsewhere in this
  * server, an unknowable name is left alone rather than guessed at.
+ *
+ * What a jump is, and how a label name is keyed, live in `gdl/labels.ts` —
+ * rename reads a label through the same model.
  */
 
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument } from '../gdl/analyzer';
-import type { Token } from '../gdl/lexer';
 import { libPartFor } from '../gdl/libpart';
+import { jumpTarget, labelKey, labelName } from '../gdl/labels';
 import { masterScriptFor, type TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
 
 const JUMPS = new Set(['gosub', 'goto']);
-
-/**
- * A label key both sides agree on.
- *
- * Names are matched case-insensitively, as everything in GDL is, and numeric
- * labels by value — so `0100:` answers `GOSUB 100`.
- */
-function labelKey(raw: string): string {
-	const n = Number(raw);
-	return /^\d+(\.\d+)?$/.test(raw) && Number.isFinite(n) ? String(n) : raw.toLowerCase();
-}
-
-/** The label a jump names, or undefined when it cannot be resolved statically. */
-function jumpTarget(toks: readonly Token[], i: number): Token | undefined {
-	const target = toks[i + 1];
-	if (!target) return undefined;
-	if (target.type === 'string') {
-		if (target.unterminated) return undefined;
-	} else if (target.type !== 'number') {
-		// A variable or anything else computed — `GOSUB _subid[i]`.
-		return undefined;
-	}
-
-	// An operator after the literal means it is one term of an expression:
-	// `GOSUB 100 + 10 * markerStyle`. Only a target standing on its own is
-	// judged; a following keyword (`... THEN GOSUB "x" ELSE ...`) is fine.
-	const after = toks[i + 2];
-	if (after?.type === 'operator') return undefined;
-
-	return target;
-}
-
-function nameOf(tok: Token): string {
-	return tok.type === 'string' ? tok.text.slice(1, -1) : tok.text;
-}
 
 export function provideLabelDiagnostics(
 	doc: GdlDocument,
@@ -107,7 +75,7 @@ export function provideLabelDiagnostics(
 			const target = jumpTarget(toks, i);
 			if (!target) continue;
 
-			const name = nameOf(target);
+			const name = labelName(target);
 			if (name === '' || known.has(labelKey(name))) continue;
 
 			const where =

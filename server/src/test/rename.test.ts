@@ -3,8 +3,9 @@
  *
  * The cases encode the scoping rules that make GDL renaming unusual: sibling
  * scripts are independent namespaces, while the master and parameter scripts
- * reach across the whole library part — and groups, which scope the other way
- * again, never leaving the one script.
+ * reach across the whole library part — groups, which scope the other way
+ * again, never leave the one script, and jump labels take a third scope, their
+ * own script plus the master that runs ahead of it.
  */
 
 import { test } from 'node:test';
@@ -15,7 +16,8 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
 import { analyze } from '../gdl/analyzer';
 import { tokenize } from '../gdl/lexer';
-import { provideRename, RenameError } from '../providers/rename';
+import { provideRename, RenameError, type TextResolver } from '../providers/rename';
+import { invalidateMasterScriptCache } from '../gdl/masterScript';
 
 const OBJECT_ROOT = join(__dirname, '..', '..', '..', 'TestObject', 'TestObject');
 const scriptPath = (name: string) => join(OBJECT_ROOT, 'scripts', name);
@@ -228,4 +230,166 @@ test('a string held by a variable that is never a group stays a string', () => {
 		'gr_post',
 	);
 	assert.equal(edit.changes![SCRATCH_URI].length, 2);
+});
+
+// --- jump labels -------------------------------------------------------------
+
+/**
+ * A rename over a script supplied here but URI'd into the fixture, so the
+ * library part around it is real — which is what a label rename needs, the
+ * master script being half of a jump's scope. Sibling scripts are supplied the
+ * way `labels.test.ts` supplies them, through the resolver.
+ */
+function renameLabelIn(
+	script: string,
+	text: string,
+	literal: string,
+	newName: string,
+	siblings: Record<string, string> = {},
+) {
+	invalidateMasterScriptCache();
+	const uri = scriptUri(script);
+	const resolve: TextResolver = (u) => {
+		if (u === uri) return text;
+		for (const [name, source] of Object.entries(siblings)) {
+			if (u === scriptUri(name)) return source;
+		}
+		// Nothing else of the fixture takes part: an empty script has no labels.
+		return '';
+	};
+	const offset = text.indexOf(literal);
+	assert.ok(offset >= 0, `the script should contain ${literal}`);
+	const td = TextDocument.create(uri, 'gdl-hsf', 1, text);
+	return provideRename(analyze(uri, text), td, td.positionAt(offset + 1), newName, resolve);
+}
+
+const SUBROUTINE = [
+	'gosub "draw handle"',
+	'if bMirror then gosub "draw handle"',
+	'end',
+	'"draw handle":',
+	'\tblock 0.02, 0.02, 0.1',
+	'return',
+].join('\n');
+
+test('a subroutine renames from its definition and from a jump alike', () => {
+	for (const cursor of ['"draw handle":', '"draw handle"']) {
+		const edit = renameLabelIn('3d.gdl', SUBROUTINE, cursor, 'draw lever');
+		assert.deepEqual(touched(edit), ['3d.gdl']);
+		const edits = edit.changes![scriptUri('3d.gdl')];
+		// Two jumps and the definition; the edit stays inside the quotes.
+		assert.equal(edits.length, 3);
+		assert.ok(edits.every((e) => e.newText === 'draw lever'));
+	}
+});
+
+test('a label rename leaves prose and computed jumps alone', () => {
+	const edit = renameLabelIn(
+		'3d.gdl',
+		[
+			'gosub "draw"',
+			'gosub "draw" + str(i, 1, 0)\t! computed — unknowable, and not this label',
+			'text2 0, 0, "draw"\t\t\t! prose',
+			'end',
+			'"draw":',
+			'return',
+		].join('\n'),
+		'"draw":',
+		'render',
+	);
+	assert.equal(edit.changes![scriptUri('3d.gdl')].length, 2);
+});
+
+test('a label name handed to a variable renames with the label', () => {
+	// `Euro-Palette AOL/3d.gdl`: the routine is picked at run time, so the
+	// string naming it sits in an assignment with no jump keyword in sight.
+	// Missing it would leave `gosub` pointing at a label that no longer exists.
+	const edit = renameLabelIn(
+		'3d.gdl',
+		[
+			'if iType = 1 then _substr = "EndBlock" else _substr = "MidBlock"',
+			'if _substr = "EndBlock" then addz 0.1\t! a question, not an assignment',
+			'sCaption = "EndBlock"\t\t\t\t\t! never jumped through — a plain string',
+			'gosub _substr',
+			'end',
+			'"EndBlock":',
+			'return',
+		].join('\n'),
+		'"EndBlock":',
+		'CornerBlock',
+	);
+	// The definition and the one assignment that names it.
+	assert.equal(edit.changes![scriptUri('3d.gdl')].length, 2);
+});
+
+test('a numeric label is refused rather than half renamed', () => {
+	// `GOSUB 100 + idx` and `COUNT_OFFSET = 107` both name a numeric label
+	// without spelling it, so a rename could not find every site.
+	assert.throws(
+		() => renameLabelIn('3d.gdl', 'gosub 100\nend\n100:\nreturn', '100:', '200'),
+		RenameError,
+	);
+});
+
+test('a label name is a string, so it may hold spaces but not a quote', () => {
+	assert.equal(
+		renameLabelIn('3d.gdl', SUBROUTINE, '"draw handle":', 'simple tap style').changes![
+			scriptUri('3d.gdl')
+		].length,
+		3,
+	);
+	assert.throws(() => renameLabelIn('3d.gdl', SUBROUTINE, '"draw handle":', 'a"b'), RenameError);
+	assert.throws(() => renameLabelIn('3d.gdl', SUBROUTINE, '"draw handle":', ''), RenameError);
+	// A number would answer jumps meant for a numeric label, which matches by value.
+	assert.throws(() => renameLabelIn('3d.gdl', SUBROUTINE, '"draw handle":', '100'), RenameError);
+});
+
+test('a subroutine cannot be renamed onto another of the same script', () => {
+	const script = ['gosub "a"', 'end', '"a":', 'return', '"b":', 'return'].join('\n');
+	assert.throws(() => renameLabelIn('3d.gdl', script, '"a":', 'b'), RenameError);
+	// Its own name in another case is a re-spelling, not a clash.
+	assert.equal(renameLabelIn('3d.gdl', script, '"a":', 'A').changes![scriptUri('3d.gdl')].length, 2);
+});
+
+test('a subroutine in the master script renames across the library part', () => {
+	// `1d.gdl` runs ahead of every other script, so its labels are the object's.
+	const master = 'gosub "shared init"\nend\n"shared init":\nreturn';
+	const edit = renameLabelIn('1d.gdl', master, '"shared init":', 'setup', {
+		'3d.gdl': 'gosub "shared init"',
+	});
+	assert.deepEqual(touched(edit), ['1d.gdl', '3d.gdl']);
+	assert.equal(edit.changes![scriptUri('1d.gdl')].length, 2);
+	assert.equal(edit.changes![scriptUri('3d.gdl')].length, 1);
+});
+
+test('a jump renames the master subroutine it resolves to', () => {
+	const edit = renameLabelIn('3d.gdl', 'gosub "shared init"', '"shared init"', 'setup', {
+		'1d.gdl': 'gosub "shared init"\nend\n"shared init":\nreturn',
+	});
+	assert.deepEqual(touched(edit), ['1d.gdl', '3d.gdl']);
+});
+
+test('a script with a subroutine of its own by that name is left out', () => {
+	// Its jumps resolve to its own label, so they are not the master's to move.
+	const edit = renameLabelIn('1d.gdl', '"shared":\nreturn', '"shared":', 'setup', {
+		'2d.gdl': 'gosub "shared"\nend\n"shared":\nreturn',
+		'3d.gdl': 'gosub "shared"',
+	});
+	assert.deepEqual(touched(edit), ['1d.gdl', '3d.gdl']);
+});
+
+test('a subroutine outside the master never leaves its script', () => {
+	// A `"draw handle":` in 2d.gdl is a different subroutine entirely.
+	const edit = renameLabelIn('3d.gdl', SUBROUTINE, '"draw handle":', 'draw lever', {
+		'2d.gdl': 'gosub "draw handle"\nend\n"draw handle":\nreturn',
+	});
+	assert.deepEqual(touched(edit), ['3d.gdl']);
+});
+
+test('a jump that resolves to nothing renames in its own file', () => {
+	// The leftover `providers/labels.ts` reports: there is no definition to
+	// follow, so the rename cannot reach further than the jumps themselves.
+	const edit = renameLabelIn('3d.gdl', 'gosub "gone"\ngosub "gone"', '"gone"', 'here');
+	assert.deepEqual(touched(edit), ['3d.gdl']);
+	assert.equal(edit.changes![scriptUri('3d.gdl')].length, 2);
 });

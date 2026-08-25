@@ -57,6 +57,7 @@
 
 import type { GdlDocument, Statement } from './analyzer';
 import type { Token } from './lexer';
+import { CLAUSE_STARTERS, forEachLiteralAssignment, isOperator } from './indirect';
 
 /** How a group is addressed at one place in the source. */
 export type GroupNameKind = 'literal' | 'variable';
@@ -89,9 +90,6 @@ const GROUP_FUNCTIONS = new Map<string, readonly number[]>([
 	['creategroupwithmaterial', [0]],
 ]);
 
-/** Words after which a new command begins inside the same statement. */
-const CLAUSE_STARTERS = new Set(['then', 'else']);
-
 /** Variant suffix, as in `SWEEPGROUP{2}`. */
 const VARIANT_RE = /\{\d+\}$/;
 
@@ -102,10 +100,6 @@ const ARITHMETIC = new Set(['+', '-', '*', '/', '^', '**']);
 interface Frame {
 	readonly spec: readonly number[] | 'all' | 'none';
 	argIndex: number;
-}
-
-function isOperator(tok: Token | undefined, text: string): boolean {
-	return tok?.type === 'operator' && tok.text === text;
 }
 
 /**
@@ -228,56 +222,20 @@ function forEachGroupName(
 
 /**
  * `<variable> = "literal"`, where the variable is one the script uses as a
- * group. The target may be a whole path — `gr_out[TYPE_MEDIA_O2]` and
- * `_drods.f[1].gr` are both real, groups being routinely tabulated into an
- * array and picked out by an index.
- *
- * The assignment must be the whole of its clause: `gr = "a" + b` builds a name
- * we cannot read, and `n = "gr_leg"` for a variable that is never placed is an
- * ordinary string.
+ * group — the spelling that names a group without saying so. The rules that
+ * make it safe live in `indirect.ts`, jump labels needing exactly the same
+ * ones; here it only remains to say which variables count.
  */
 function forEachIndirectName(
 	stmt: Statement,
 	groupVariables: ReadonlySet<string>,
 	visit: (name: GroupName) => void,
 ): void {
-	const toks = stmt.tokens;
-	for (let i = 0; i < toks.length; i++) {
-		const head = toks[i];
-		if (head.type !== 'identifier' || !groupVariables.has(head.lower)) continue;
-
-		// The assignment has to open its clause, or the `=` is a comparison:
-		// `IF gr_toplace = "x" THEN …` asks a question, it does not name a group.
-		const before = toks[i - 1];
-		if (before && !(before.type === 'identifier' && CLAUSE_STARTERS.has(before.lower))) continue;
-
-		// Step over the rest of the target: subscripts and dict members alike.
-		let j = i + 1;
-		let depth = 0;
-		while (j < toks.length) {
-			const tok = toks[j];
-			if (isOperator(tok, '[')) depth++;
-			else if (isOperator(tok, ']')) depth--;
-			else if (depth === 0 && !isOperator(tok, '.') && !isOperator(toks[j - 1], '.')) break;
-			if (depth < 0) break;
-			j++;
-		}
-		if (depth !== 0) continue;
-
-		if (!isOperator(toks[j], '=')) continue;
-		const value = toks[j + 1];
-		if (value?.type !== 'string' || value.unterminated) continue;
-
-		// Nothing may follow but the end of the statement or the next clause.
-		const after = toks[j + 2];
-		if (after && !(after.type === 'identifier' && CLAUSE_STARTERS.has(after.lower))) continue;
-
-		// `_gname[1] = ""` clears the slot rather than naming anything.
-		const key = value.text.slice(1, -1).toLowerCase();
-		if (!key) continue;
-
-		visit({ kind: 'literal', key, token: value });
-	}
+	forEachLiteralAssignment(
+		stmt,
+		(head) => groupVariables.has(head),
+		(value, key) => visit({ kind: 'literal', key, token: value }),
+	);
 }
 
 /**

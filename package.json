@@ -4,7 +4,7 @@
 	"description": "A language server for GDL (Geometric Description Language) for Archicad.",
 	"author": "Lucas Becker",
 	"license": "MIT",
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/runxel/lsp-gdl"

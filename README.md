@@ -43,8 +43,9 @@ Solid but still quite early. The foundations are in place and have been tested a
 - **Symbol Rename**:
   - a variable defined in the **master** script is renamed across every script of the library part
   - a variable local to one script is renamed only in there
-  - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
+  - labels (subroutine and `goto` names)
   - "`group`" names can be renamed as well
+  - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
 - **Go-to-definition** (⌘-click) for **Group commands**
 
 
