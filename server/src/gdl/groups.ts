@@ -36,6 +36,23 @@
  *     followed by `GROUP fixingGroup` is real, idiomatic code. The group's name
  *     is unknowable, but the *variable* is not — so the variable is what gets
  *     matched up, `GROUP fixingGroup` counting as its definition site.
+ *
+ * There is a third spelling between those two, and it is the one rename cannot
+ * afford to miss: a variable that is used as a group *and* is handed a plain
+ * string literal somewhere.
+ *
+ *     if _is_overriden then
+ *         gr_toplace = group_overriden
+ *     else
+ *         gr_toplace = "Object_stretched"      <- names the group
+ *     endif
+ *     placegroup gr_toplace
+ *
+ * That literal is a group name as surely as the one in `KILLGROUP`, and the
+ * statement holding it mentions no group keyword at all. So a second pass picks
+ * up `<var> = "literal"` for any variable the script elsewhere places, kills or
+ * combines. Only a lone literal counts — `gr = "wall" + STR (i)` is computed,
+ * like every other built-up name here.
  */
 
 import type { GdlDocument, Statement } from './analyzer';
@@ -109,7 +126,7 @@ function isWholeOperand(toks: readonly Token[], i: number): boolean {
  */
 function forEachGroupName(
 	stmt: Statement,
-	visit: (name: GroupName, isDefinition: boolean) => void,
+	visit: (name: GroupName, isDefinition: boolean, index: number) => void,
 ): void {
 	const toks = stmt.tokens;
 	let stack: Frame[] = [];
@@ -200,11 +217,100 @@ function forEachGroupName(
 		if (!inGroupPosition() || !isWholeOperand(toks, i)) continue;
 
 		if (tok.type === 'string' && !tok.unterminated) {
-			visit({ kind: 'literal', key: tok.text.slice(1, -1).toLowerCase(), token: tok }, defining);
+			visit({ kind: 'literal', key: tok.text.slice(1, -1).toLowerCase(), token: tok }, defining, i);
 			defining = false;
 		} else if (tok.type === 'identifier') {
-			visit({ kind: 'variable', key: tok.lower, token: tok }, defining);
+			visit({ kind: 'variable', key: tok.lower, token: tok }, defining, i);
 			defining = false;
+		}
+	}
+}
+
+/**
+ * `<variable> = "literal"`, where the variable is one the script uses as a
+ * group. The target may be a whole path — `gr_out[TYPE_MEDIA_O2]` and
+ * `_drods.f[1].gr` are both real, groups being routinely tabulated into an
+ * array and picked out by an index.
+ *
+ * The assignment must be the whole of its clause: `gr = "a" + b` builds a name
+ * we cannot read, and `n = "gr_leg"` for a variable that is never placed is an
+ * ordinary string.
+ */
+function forEachIndirectName(
+	stmt: Statement,
+	groupVariables: ReadonlySet<string>,
+	visit: (name: GroupName) => void,
+): void {
+	const toks = stmt.tokens;
+	for (let i = 0; i < toks.length; i++) {
+		const head = toks[i];
+		if (head.type !== 'identifier' || !groupVariables.has(head.lower)) continue;
+
+		// The assignment has to open its clause, or the `=` is a comparison:
+		// `IF gr_toplace = "x" THEN …` asks a question, it does not name a group.
+		const before = toks[i - 1];
+		if (before && !(before.type === 'identifier' && CLAUSE_STARTERS.has(before.lower))) continue;
+
+		// Step over the rest of the target: subscripts and dict members alike.
+		let j = i + 1;
+		let depth = 0;
+		while (j < toks.length) {
+			const tok = toks[j];
+			if (isOperator(tok, '[')) depth++;
+			else if (isOperator(tok, ']')) depth--;
+			else if (depth === 0 && !isOperator(tok, '.') && !isOperator(toks[j - 1], '.')) break;
+			if (depth < 0) break;
+			j++;
+		}
+		if (depth !== 0) continue;
+
+		if (!isOperator(toks[j], '=')) continue;
+		const value = toks[j + 1];
+		if (value?.type !== 'string' || value.unterminated) continue;
+
+		// Nothing may follow but the end of the statement or the next clause.
+		const after = toks[j + 2];
+		if (after && !(after.type === 'identifier' && CLAUSE_STARTERS.has(after.lower))) continue;
+
+		// `_gname[1] = ""` clears the slot rather than naming anything.
+		const key = value.text.slice(1, -1).toLowerCase();
+		if (!key) continue;
+
+		visit({ kind: 'literal', key, token: value });
+	}
+}
+
+/**
+ * Walks the whole script, reporting every group name in it — the indirect ones
+ * included, which is why this cannot be done a statement at a time: whether
+ * `gr_toplace = "x"` names a group depends on a `PLACEGROUP` further down.
+ */
+function forEachGroupNameInDocument(
+	doc: GdlDocument,
+	visit: (name: GroupName, isDefinition: boolean) => void,
+): void {
+	const groupVariables = new Set<string>();
+	for (const stmt of doc.statements) {
+		forEachGroupName(stmt, (name, _isDefinition, index) => {
+			if (name.kind !== 'variable') return;
+			// `PLACEGROUP _drods.f[1].gr` reaches through a path, and only its
+			// head is the variable — the `gr` after the `]` is a member name,
+			// which on its own would match far too much.
+			if (isOperator(stmt.tokens[index - 1], '.')) return;
+			groupVariables.add(name.key);
+		});
+	}
+
+	for (const stmt of doc.statements) {
+		const direct = new Set<number>();
+		forEachGroupName(stmt, (name, isDefinition) => {
+			direct.add(name.token.start);
+			visit(name, isDefinition);
+		});
+		if (groupVariables.size) {
+			forEachIndirectName(stmt, groupVariables, (name) => {
+				if (!direct.has(name.token.start)) visit(name, false);
+			});
 		}
 	}
 }
@@ -221,20 +327,26 @@ export function groupDefinitions(doc: GdlDocument): GroupName[] {
 }
 
 /**
+ * Every group name in this script, in source order — the definitions and the
+ * references alike. Rename wants the lot, and wants them only where GDL reads
+ * them as a group, so a `TEXT2 0, 0, "gr_leg"` elsewhere in the script is left
+ * alone however exactly it matches.
+ */
+export function groupNames(doc: GdlDocument): GroupName[] {
+	const names: GroupName[] = [];
+	forEachGroupNameInDocument(doc, (name) => names.push(name));
+	return names;
+}
+
+/**
  * The group name under `offset`, if the cursor is on one. A name is only
  * reported where GDL reads it as a group — `TEXT2 0, 0, "box"` mentions no
  * group, however many groups happen to be called `box`.
  */
 export function groupNameAt(doc: GdlDocument, offset: number): GroupName | undefined {
-	for (const stmt of doc.statements) {
-		if (offset < stmt.start) break;
-		if (offset > stmt.end) continue;
-
-		let found: GroupName | undefined;
-		forEachGroupName(stmt, (name) => {
-			if (offset >= name.token.start && offset <= name.token.end) found = name;
-		});
-		return found;
-	}
-	return undefined;
+	let found: GroupName | undefined;
+	forEachGroupNameInDocument(doc, (name) => {
+		if (offset >= name.token.start && offset <= name.token.end) found = name;
+	});
+	return found;
 }

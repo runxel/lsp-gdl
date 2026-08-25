@@ -18,6 +18,17 @@
  *     (`VALUES "iDetail"`, `LOCK "bFrame"`), so both spellings must change —
  *     as must the `Name=` attribute in the XML itself.
  *
+ * **Groups** are the exception to all of that, and they scope the other way.
+ * The guide has group names unique "inside the current script", and a group is
+ * cleared when interpretation ends, so a rename of one never leaves the file it
+ * was typed in — not even from `1d.gdl`. Both spellings are handled:
+ *
+ *   - `GROUP fixingGroup` names the group through a variable, so renaming it is
+ *     an ordinary variable rename and takes the ordinary variable scope.
+ *   - `GROUP "gr_leg"` names it with a *string*, which no other rename here
+ *     touches. Only the strings GDL actually reads as a group are rewritten —
+ *     a `TEXT2 0, 0, "gr_leg"` in the same script is prose and stays put.
+ *
  * Names Archicad owns — keywords, globals, and fixed parameters such as `A`,
  * `zzyzx` or `ac_bottomlevel` — are refused outright.
  */
@@ -33,6 +44,7 @@ import { tokenize, type Token } from '../gdl/lexer';
 import { analyze, tokenAt, type GdlDocument } from '../gdl/analyzer';
 import { lookup } from '../gdl/keywords';
 import { libPartFor, libPartScripts, paramListPath, type GdlParameter } from '../gdl/libpart';
+import { groupNameAt, groupNames, type GroupName } from '../gdl/groups';
 import { URI } from 'vscode-uri';
 import { readFileSync } from 'node:fs';
 
@@ -44,12 +56,23 @@ const PROJECT_WIDE_SCRIPTS = new Set(['1d', 'vl']);
 
 const IDENTIFIER_RE = /^[A-Za-z_~][A-Za-z0-9_]*$/;
 
+/**
+ * What a group name may not hold. It is a string rather than an identifier, so
+ * it takes far more than a variable may — `GROUP "simple tap style"` is
+ * idiomatic — and only two things are genuinely out: one of the three string
+ * delimiters, which would close the literal early wherever the name is spelt
+ * with that one, and a line break, which no GDL string may cross.
+ */
+const BAD_IN_GROUP_NAME = /["'`\r\n]/;
+
 export class RenameError extends Error {}
 
 interface RenameTarget {
 	readonly name: string;
 	readonly range: Range;
 	readonly parameter?: GdlParameter;
+	/** Set when the cursor is on a group named by a string literal. */
+	readonly group?: GroupName;
 	/** Rename across the whole library part rather than this file alone. */
 	readonly projectWide: boolean;
 }
@@ -75,9 +98,29 @@ export function resolveRenameTarget(
 	position: Position,
 	resolve: TextResolver,
 ): RenameTarget {
-	const token = tokenAt(doc, td.offsetAt(position));
+	const offset = td.offsetAt(position);
+
+	// A group named by a string. Checked before the token kind, since this is
+	// the one rename whose target is a literal rather than an identifier — and
+	// only where GDL reads that string as a group. A group named by a *variable*
+	// deliberately falls through: it is a variable, and takes a variable's scope.
+	const group = groupNameAt(doc, offset);
+	if (group?.kind === 'literal') {
+		const inner = group.token.text.slice(1, -1);
+		return {
+			name: inner,
+			range: Range.create(
+				td.positionAt(group.token.start + 1),
+				td.positionAt(group.token.end - 1),
+			),
+			group,
+			projectWide: false,
+		};
+	}
+
+	const token = tokenAt(doc, offset);
 	if (!token || token.type !== 'identifier') {
-		throw new RenameError('Only variables and parameters can be renamed.');
+		throw new RenameError('Only variables, parameters and groups can be renamed.');
 	}
 
 	// A dotted name (`pt.start`) renames only its leading segment.
@@ -186,6 +229,50 @@ function paramListEdit(xmlPath: string, oldName: string, newName: string): TextE
 	return edits;
 }
 
+/**
+ * Rewrites every string that names this group, in this script and no other.
+ *
+ * The edit lands *inside* the quotes, which keeps whichever delimiter the
+ * author used at each site — the same group may well be written `"gr_leg"` in
+ * one line and `'gr_leg'` in the next, the second spelling being how a `"` is
+ * embedded elsewhere.
+ */
+function renameGroup(
+	doc: GdlDocument,
+	td: TextDocument,
+	group: GroupName,
+	newName: string,
+): WorkspaceEdit {
+	if (!newName) {
+		throw new RenameError('A group name cannot be empty.');
+	}
+	if (BAD_IN_GROUP_NAME.test(newName)) {
+		throw new RenameError('A group name cannot contain a quote mark or a line break.');
+	}
+
+	const names = groupNames(doc);
+	const wanted = newName.toLowerCase();
+
+	// The guide requires group names to be unique within a script, so renaming
+	// one onto another would silently merge two sets of bodies.
+	if (names.some((n) => n.kind === 'literal' && n.key === wanted && n.key !== group.key)) {
+		throw new RenameError(
+			`\`${newName}\` is already a group in this script — group names must be unique within one script.`,
+		);
+	}
+
+	const edits = names
+		.filter((n) => n.kind === 'literal' && n.key === group.key)
+		.map((n) =>
+			TextEdit.replace(
+				Range.create(td.positionAt(n.token.start + 1), td.positionAt(n.token.end - 1)),
+				newName,
+			),
+		);
+
+	return { changes: { [doc.uri]: edits } };
+}
+
 export function provideRename(
 	doc: GdlDocument,
 	td: TextDocument,
@@ -194,6 +281,14 @@ export function provideRename(
 	resolve: TextResolver,
 ): WorkspaceEdit {
 	const trimmed = newName.trim();
+
+	// What makes a valid new name depends on what is being renamed, so the
+	// target is resolved first — a group name is a string and answers to none
+	// of the rules an identifier does.
+	const target = resolveRenameTarget(doc, td, position, resolve);
+
+	if (target.group) return renameGroup(doc, td, target.group, trimmed);
+
 	if (!IDENTIFIER_RE.test(trimmed)) {
 		throw new RenameError(
 			`\`${trimmed}\` is not a valid GDL name — use letters, digits and underscores, not starting with a digit.`,
@@ -204,7 +299,6 @@ export function provideRename(
 		throw new RenameError(`\`${clash.name}\` is already a GDL ${clash.kind} — pick another name.`);
 	}
 
-	const target = resolveRenameTarget(doc, td, position, resolve);
 	const changes: Record<string, TextEdit[]> = {};
 
 	const libpart = libPartFor(doc.uri);

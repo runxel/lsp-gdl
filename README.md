@@ -44,6 +44,7 @@ Solid but still quite early. The foundations are in place and have been tested a
   - a variable defined in the **master** script is renamed across every script of the library part
   - a variable local to one script is renamed only in there
   - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
+  - "`group`" names can be renamed as well
 - **Go-to-definition** (⌘-click) for **Group commands**
 
 
