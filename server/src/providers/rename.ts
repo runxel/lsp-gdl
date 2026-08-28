@@ -15,8 +15,10 @@
  *     share a name*. Renaming one must NOT touch the other.
  *   - **Parameters** from `paramlist.xml` are in scope in all scripts, and are
  *     referred to both as bare identifiers and as string literals
- *     (`VALUES "iDetail"`, `LOCK "bFrame"`), so both spellings must change —
- *     as must the `Name=` attribute in the XML itself.
+ *     (`VALUES "iDetail"`, `LOCK "bFrame"`, `UI_INFIELD "bFrame"`), so both
+ *     spellings must change — as must the `Name=` attribute in the XML itself.
+ *     A rename starts from either spelling: `gdl/paramNames.ts` says where GDL
+ *     reads a string as a parameter name, so the cursor may sit on one.
  *
  * **Groups** are the exception to all of that, and they scope the other way.
  * The guide has group names unique "inside the current script", and a group is
@@ -59,6 +61,7 @@ import { analyze, tokenAt, type GdlDocument } from '../gdl/analyzer';
 import { lookup } from '../gdl/keywords';
 import { libPartFor, libPartScripts, paramListPath, type GdlParameter } from '../gdl/libpart';
 import { groupNameAt, groupNames, type GroupName } from '../gdl/groups';
+import { parameterNameAt } from '../gdl/paramNames';
 import {
 	labelDefinitionKeys,
 	labelKey,
@@ -196,6 +199,42 @@ export function resolveRenameTarget(
 			label,
 			projectWide: labelReachesWholePart(doc, label.key, resolve),
 		};
+	}
+
+	// A parameter addressed by name rather than written bare. `VALUES`, `LOCK`,
+	// `HIDEPARAMETER` and the interface script's controls all reach into the
+	// parameter list with a string, and that string is a reference as surely as
+	// the bare spelling is — so a rename must be reachable from it, and must
+	// carry the parameter's own scope: the whole library part, XML included.
+	const named = parameterNameAt(doc, offset);
+	if (named) {
+		const inner = Range.create(
+			td.positionAt(named.token.start + 1),
+			td.positionAt(named.token.end - 1),
+		);
+		const part = libPartFor(doc.uri);
+		const param = part?.parameters.get(named.name.toLowerCase());
+		if (param?.fix) {
+			throw new RenameError(
+				`\`${param.name}\` is a fixed parameter of this library part and cannot be renamed.`,
+			);
+		}
+		if (!part) {
+			throw new RenameError(
+				`\`${named.name}\` names a parameter, but this script is not inside a ` +
+					'library part, so there is no parameter list to rename it in.',
+			);
+		}
+		if (!param) {
+			// Nothing to rename: either the name is a typo `providers/paramRefs.ts`
+			// already reports, or this is a macro, whose parameter commands address
+			// the *caller's* list — which is not ours to rewrite.
+			throw new RenameError(
+				`\`${named.name}\` is not a parameter of \`${part.name}\`, so there is ` +
+					'nothing to rename.',
+			);
+		}
+		return { name: named.name, range: inner, parameter: param, projectWide: true };
 	}
 
 	const token = tokenAt(doc, offset);

@@ -38,17 +38,30 @@ import type { GdlDocument, Statement } from '../gdl/analyzer';
 import type { Token } from '../gdl/lexer';
 import { lookup } from '../gdl/keywords';
 import { libPartFor, type LibPart } from '../gdl/libpart';
+import { parameterNameArgs } from '../gdl/paramNames';
 
 export const SOURCE = 'gdl';
 
-/** Commands whose every argument is a parameter name. */
-const STRING_NAMED = new Set(['lock', 'hideparameter']);
+/**
+ * Which arguments of this command name a parameter, if any.
+ *
+ * `gdl/paramNames.ts` holds the table, rename reading the same one — there is
+ * one account of where a parameter may be named by a string, not two. It covers
+ * the interface script's controls as well, which this check never meets: only
+ * the master and parameter scripts are examined (see `CHECKED_SCRIPTS`), and no
+ * script of either kind in the corpus scripts a `UI_` command.
+ */
+const namedArguments = (head: string) => parameterNameArgs(head);
+
+/** `LOCK "a", "b"` — every argument is a name. */
+const namesEveryArgument = (spec: ReturnType<typeof namedArguments>) => spec === 'all';
 
 /**
- * Commands whose *first* argument is a parameter name; everything after it is
- * the value list, which must not be checked.
+ * `VALUES "name" v1, v2` — the *first* argument is a name and everything after
+ * it is the value list, which must not be checked.
  */
-const FIRST_ARG_NAMED = new Set(['values', 'values{2}']);
+const namesFirstArgumentOnly = (spec: ReturnType<typeof namedArguments>) =>
+	Array.isArray(spec) && spec.length === 1 && spec[0] === 0;
 
 function isOp(tok: Token | undefined, text: string): boolean {
 	return tok?.type === 'operator' && tok.text === text;
@@ -137,7 +150,9 @@ export function provideParameterRefDiagnostics(doc: GdlDocument, td: TextDocumen
 		// the rest is the value list. The comma after the name is optional, and
 		// the name may be built up (`VALUES "order_" + n`), which we cannot
 		// resolve — so require a lone string literal.
-		if (FIRST_ARG_NAMED.has(head)) {
+		const spec = namedArguments(head);
+
+		if (namesFirstArgumentOnly(spec)) {
 			const tok = toks[1];
 			if (tok?.type !== 'string' || tok.unterminated) continue;
 			const after = toks[2];
@@ -149,7 +164,7 @@ export function provideParameterRefDiagnostics(doc: GdlDocument, td: TextDocumen
 			continue;
 		}
 
-		if (STRING_NAMED.has(head)) {
+		if (namesEveryArgument(spec)) {
 			// `LOCK ALL "keepThis"` — the names after ALL are the exceptions,
 			// and they are parameter names just the same.
 			let from = 1;

@@ -89,11 +89,53 @@ test('a master-script variable renames across the whole library part', () => {
 
 test('a parameter renames across scripts, its strings, and paramlist.xml', () => {
 	const edit = renameAt('2d.gdl', 'bShowFrame', 'bDrawFrame');
-	assert.deepEqual(touched(edit), ['2d.gdl', '3d.gdl', 'paramlist.xml', 'vl.gdl']);
+	assert.deepEqual(touched(edit), ['2d.gdl', '3d.gdl', 'paramlist.xml', 'ui.gdl', 'vl.gdl']);
 
 	// vl.gdl mentions it as a bare identifier three times and as `lock "..."`.
 	const vl = edit.changes![scriptUri('vl.gdl')];
 	assert.equal(vl.length, 4);
+	// ui.gdl names it only as a string, in `ui_infield "bShowFrame"`.
+	assert.equal(edit.changes![scriptUri('ui.gdl')].length, 1);
+});
+
+// --- parameters named by a string --------------------------------------------
+
+test('a parameter renames from its string spelling in VALUES', () => {
+	const edit = renameStringAt('vl.gdl', 'iDetailLevel', 'iLod');
+	assert.deepEqual(touched(edit), ['1d.gdl', '3d.gdl', 'paramlist.xml', 'ui.gdl', 'vl.gdl']);
+	// The edit lands inside the quotes, so the delimiter the author chose stays.
+	assert.ok(edit.changes![scriptUri('vl.gdl')].every((e) => e.newText === 'iLod'));
+});
+
+test('a parameter renames from its string spelling in LOCK', () => {
+	const edit = renameStringAt('vl.gdl', 'bShowFrame', 'bDrawFrame');
+	assert.deepEqual(touched(edit), ['2d.gdl', '3d.gdl', 'paramlist.xml', 'ui.gdl', 'vl.gdl']);
+});
+
+test('a parameter renames from its string spelling in a UI control', () => {
+	// `UI_INFIELD "name"` and `UI_LISTITEM id, field, "name"` are the two
+	// shapes the interface script uses; both reach the whole library part.
+	const infield = renameStringAt('ui.gdl', 'iDetailLevel', 'iLod');
+	assert.deepEqual(touched(infield), ['1d.gdl', '3d.gdl', 'paramlist.xml', 'ui.gdl', 'vl.gdl']);
+
+	const listitem = renameStringAt('ui.gdl', 'matBody', 'matShell');
+	assert.deepEqual(touched(listitem), ['3d.gdl', 'paramlist.xml', 'ui.gdl', 'vl.gdl']);
+});
+
+test('a fixed parameter cannot be renamed from its string spelling either', () => {
+	assert.throws(() => renameStringAt('ui.gdl', 'A', 'width'), RenameError);
+});
+
+test('a name that is not a parameter of the part cannot be renamed', () => {
+	// vl.gdl locks `bShowFrmae` — a typo `providers/paramRefs.ts` reports.
+	// There is no parameter behind it, so there is nothing to rename.
+	assert.throws(() => renameStringAt('vl.gdl', 'bShowFrmae', 'bDrawFrame'), RenameError);
+});
+
+test('a parameter named by a string still takes an identifier as its new name', () => {
+	// Unlike a group or a label, a parameter is written bare as well, so the
+	// new name has to be a name GDL would accept there.
+	assert.throws(() => renameStringAt('vl.gdl', 'bShowFrame', 'show frame'), RenameError);
 });
 
 test('fixed parameters cannot be renamed', () => {

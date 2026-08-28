@@ -1,0 +1,24 @@
+! ––– INTERFACE script ––– !
+! The controls address the parameter list by *name*, and that name is a
+! string — so `bShowFrame` is spelt here exactly as it is in `lock` over in
+! vl.gdl, and a rename has to reach this spelling as well as the bare one.
+
+ui_dialog "TestObject"
+
+ui_outfield "Detail level:", 10, 10, 100, 20
+ui_infield "iDetailLevel", 120, 10, 100, 20
+ui_infield "bShowFrame", 120, 40, 100, 20
+
+! A list item's first two arguments identify the row and the listfield it
+! belongs to; the parameter comes third. An empty name marks a group row.
+ui_listfield 1, 10, 70, 210, 60
+ui_listitem 1, 1, ""
+ui_listitem 2, 1, "matBody"
+
+! A fixed parameter is named the same way, and Archicad owns the name — so it
+! is refused from this spelling exactly as it is from the bare one.
+ui_infield "A", 120, 140, 100, 20
+
+! The {2} versions take the parameter bare, so that spelling is an ordinary
+! identifier and needs nothing special.
+ui_infield{2} zzyzx, 120, 170, 100, 20
