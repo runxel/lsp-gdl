@@ -20,10 +20,10 @@
  *
  * Four rules govern it, every one of them written by the corpus:
  *
- *   - **Only a real table is aligned**, and the head row carrying the command
- *     is judged apart from the value rows below it. `tableRows()` below; this
- *     is the rule that keeps idiomatic code from being made worse, and it is
- *     worth reading before anything else here.
+ *   - **Only a real table is aligned**, and the preamble carrying the command
+ *     and its leading arguments is judged apart from the value rows below it.
+ *     `tableRows()` below; this is the rule that keeps idiomatic code from being
+ *     made worse, and it is worth reading before anything else here.
  *   - **A column of one is left as written.** Alignment needs two rows to line
  *     up. That is what keeps the idiomatic `put \` on the head line where it
  *     is, rather than dragging it out to the width of the table below; where
@@ -68,9 +68,9 @@
  *     (`put 1, 2 : addx 1`), and it is also the honest answer for a shape this
  *     has never seen.
  *
- * Corpus: 2448 files, 0 crashes, and — asserted over every file, in both tabs
+ * Corpus: 2458 files, 0 crashes, and — asserted over every file, in both tabs
  * and spaces — the token stream unchanged, the second run a no-op, and not one
- * line pushed past 255 characters. 978 files hold something it would align.
+ * line pushed past 255 characters. 1119 files hold something it would align.
  */
 
 import type { Range, TextEdit } from 'vscode-languageserver/node';
@@ -299,14 +299,16 @@ interface Gap {
  *
  * Those are not columns, they are a stream of pairs wrapped where the line ran
  * out, and lining them up put the strings 30 characters from the numbers they
- * belong to. So the value rows must actually agree: **every row carrying a
- * comma has the same number of cells**, or none of them is moved. Rows with no
- * comma at all — `put \` opening the statement, `then` closing it — are not
- * part of the table and neither widen it nor get widened.
+ * belong to. So the table is **the run of rows the statement ends on that all
+ * carry the same number of cells**, and it must hold at least two of them, or
+ * nothing is moved. Rows with no comma at all — `put \` opening the statement,
+ * `then` closing it — are not part of the table and neither widen it nor get
+ * widened.
  *
- * **The head row is judged separately**, because it is the one row that is not
- * only values: it carries the command, and whatever arguments come before the
- * list proper. That is the ordinary shape of a GDL table —
+ * **Whatever stands in front of that run is preamble, and is judged apart**,
+ * because those rows are not only values: they carry the command, and whatever
+ * arguments come before the list proper. That is the ordinary shape of a GDL
+ * table —
  *
  *     poly2_b 5, 1+2*bDrawFill+64, gs_fill_pen, gs_back_pen,
  *         -RAD_BLIND_SPOUT, 0,      1,
@@ -317,16 +319,35 @@ interface Gap {
  * them left every `POLY2_B`, `PRISM_`, `COOR`, `TUBE` and `EXTRUDE` in the
  * corpus untouched, which is most of what anyone would reach for this command
  * to do: 2860 tables in 313 files, the coordinate lists this exists for. So a
- * head row of a different width is simply not a row of the table. The rows
- * below line up with each other and its own spacing is left as the author wrote
- * it, which is also what keeps it from dragging column 1 out to the width of a
- * command — the very thing that spoiled the `VALUES{2}` above. Where the head
- * *does* agree — `put 1, 2, 3,` over more triples — it takes part as before.
+ * row of a different width in front of the table is simply not a row of it. The
+ * rows below line up with each other and the preamble's own spacing is left as
+ * the author wrote it, which is also what keeps it from dragging column 1 out to
+ * the width of a command — the very thing that spoiled the `VALUES{2}` above.
+ * Where the head *does* agree — `put 1, 2, 3,` over more triples — it takes part
+ * as before.
+ *
+ * **The preamble is more than the head row**, which is the second thing the
+ * corpus said, reported by the project owner on `UI_INFIELD{3}`:
+ *
+ *     ui_infield{3} "i_type_door", x1, cy, 164, cell_h + 10,
+ *         2, 15, 28, 4,
+ *         cell_w, cell_h, cell_w, cell_h,
+ *         _icons[DOOR_NONE],   str_door[DOOR_NONE],   DOOR_NONE,
+ *         _icons[DOOR_SIMPLE], str_door[DOOR_SIMPLE], DOOR_SIMPLE,
+ *         ...
+ *
+ * Three rows of preamble — the field's geometry, the picture grid, the cell
+ * size — and then a plain table of icon, text and value. Judging only the head
+ * apart left all of it unaligned, which is 1196 statements in the corpus, and a
+ * `TUBE` whose cross-section rows are triples over a path of quads is the same
+ * shape again. So the run is taken from the end.
  *
  * The last row is held to the same width as the rest, though it is the one row
  * that could honestly run short, the list having ended. Letting it off brought
  * the `VALUES{2}` stream straight back: its wrapped rows agree by accident and
- * only the remainder at the end does not, so the exemption made it a table.
+ * only the remainder at the end does not, so the exemption made it a table. That
+ * is also why the table is the *last* run and not any run: a stream's remainder
+ * still condemns the whole statement, exactly as it did before.
  *
  * Statements that fail all this still have their `\` and comment columns
  * aligned; those never depended on the cells lining up.
@@ -334,13 +355,14 @@ interface Gap {
 function tableRows(rows: readonly Row[]): ReadonlySet<number> {
 	const none: ReadonlySet<number> = new Set();
 	const values = rows.map((_, i) => i).filter((i) => rows[i].cells.length > 1);
-	// The head is judged against the body, never the other way round.
-	const body = values.filter((i) => i !== 0);
-	if (body.length === 0) return none;
-	const width = rows[body[0]].cells.length;
-	if (!body.every((i) => rows[i].cells.length === width)) return none;
-	const table = new Set(body);
-	if (values[0] === 0 && rows[0].cells.length === width) table.add(0);
+	if (values.length === 0) return none;
+	// The table is the run of rows the statement ends on, and whatever stands in
+	// front of it at another width is preamble, judged apart. That was always the
+	// head row's exemption; it is simply no longer only the head row's.
+	const width = rows[values[values.length - 1]].cells.length;
+	let first = values.length - 1;
+	while (first > 0 && rows[values[first - 1]].cells.length === width) first--;
+	const table = new Set(values.slice(first));
 	return table.size < 2 ? none : table;
 }
 

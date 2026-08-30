@@ -114,6 +114,46 @@ test('...but a head row that does match still takes part', () => {
 	);
 });
 
+test('a preamble of several rows is exempt, like the head row', () => {
+	// Reported by the project owner. `UI_INFIELD{3}` puts three rows of preamble
+	// in front of its table — the field's geometry, then the picture grid, then
+	// the cell size — and the icon/text/value triples below are as much a table as
+	// any coordinate list. Requiring *all* the value rows to agree left the whole
+	// statement unaligned because of those three.
+	assert.equal(
+		format(
+			[
+				'ui_infield{3} "i_type", x1, cy, 164, cell_h,',
+				'    2, 15, 28, 4,',
+				'    cell_w, cell_h, cell_w, cell_h,',
+				'    _icons[DOOR_NONE], str_door[DOOR_NONE], DOOR_NONE,',
+				'    _icons[DOOR_SIMPLE_SIDE1], str_door[DOOR_SIMPLE_SIDE1], DOOR_SIMPLE_SIDE1',
+			].join('\n'),
+		),
+		[
+			// The two preamble rows keep their own spacing, exactly as the head does.
+			'ui_infield{3} "i_type", x1, cy, 164, cell_h,',
+			'    2, 15, 28, 4,',
+			'    cell_w, cell_h, cell_w, cell_h,',
+			'    _icons[DOOR_NONE],         str_door[DOOR_NONE],         DOOR_NONE,',
+			'    _icons[DOOR_SIMPLE_SIDE1], str_door[DOOR_SIMPLE_SIDE1], DOOR_SIMPLE_SIDE1',
+		].join('\n'),
+	);
+});
+
+test('the table is the run the statement ends on, not one somewhere in it', () => {
+	// `bIM PV Panel/3d.gdl`: a TUBE's cross-section rows are triples and its path
+	// rows are quads, so only the second table is aligned. Taking the *last* run
+	// is what keeps `the last row may not run short` below intact — a wrapped
+	// stream's remainder still condemns the whole statement.
+	assert.equal(
+		format(
+			['tube 2, 3, 16,', '    0, 0, 0,', '    0, 0.035, 0,', '    0, 0, 0, 0,', '    AAAA, 0, 0, 0'].join('\n'),
+		),
+		['tube 2, 3, 16,', '    0, 0, 0,', '    0, 0.035, 0,', '    0,    0, 0, 0,', '    AAAA, 0, 0, 0'].join('\n'),
+	);
+});
+
 test('the value rows themselves must still agree', () => {
 	// The head being exempt is not a licence to align a wrapped stream: these
 	// rows are pairs that ran out of line, not columns.
