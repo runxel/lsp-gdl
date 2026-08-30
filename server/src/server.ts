@@ -17,6 +17,7 @@ import {
 	DocumentDiagnosticReportKind,
 	ResponseError,
 	ErrorCodes,
+	type TextDocumentIdentifier,
 	type DocumentDiagnosticReport,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -29,6 +30,7 @@ import { provideDefinition } from './providers/definition';
 import { provideHover } from './providers/hover';
 import { provideDiagnostics } from './providers/diagnostics';
 import { provideFormattingEdits, type AlignOptions } from './providers/format';
+import { provideScriptEndMarkers } from './providers/markers';
 import { provideRename, resolveRenameTarget, RenameError, type TextResolver } from './providers/rename';
 
 const connection = createConnection(ProposedFeatures.all);
@@ -261,6 +263,26 @@ connection.onDocumentRangeFormatting((params) => {
 		params.range,
 	);
 });
+
+/**
+ * `gdl/scriptEndMarkers` — the lines a script stops on.
+ *
+ * Not an LSP request, because the protocol has no notion of an editor
+ * decoration and VS Code exposes no minimap API at all; the client draws the
+ * rule itself and only needs telling where. Finding the terminator is language
+ * knowledge all the same — `END` inside a comment, a string or a banner is not
+ * one — so it is answered here from the shared analysis cache rather than by a
+ * regex on the client, and costs nothing beyond the parse every other provider
+ * already asked for.
+ */
+connection.onRequest(
+	'gdl/scriptEndMarkers',
+	(params: { textDocument: TextDocumentIdentifier }) => {
+		const textDocument = documents.get(params.textDocument.uri);
+		if (!textDocument) return [];
+		return provideScriptEndMarkers(getAnalysis(textDocument), textDocument);
+	},
+);
 
 connection.onDidChangeWatchedFiles(() => {
 	// paramlist.xml or libpartdata.xml changed on disk — drop cached parameters.

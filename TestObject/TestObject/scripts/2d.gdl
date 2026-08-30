@@ -13,3 +13,15 @@ if bShowFrame then rect2 0, 0, A, B
 group "not_here"
 	!...
 endgroup
+
+
+end param1,
+	param2
+
+
+"some_subroutine":
+
+	line2 0, 0, A, B
+
+return
+
