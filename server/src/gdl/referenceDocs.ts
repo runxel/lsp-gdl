@@ -92,8 +92,12 @@ const ENTITIES: Readonly<Record<string, string>> = {
 	nbsp: ' ',
 };
 
-/** Strips tags and decodes the handful of entities DocBook actually emits. */
-function plainText(html: string): string {
+/**
+ * Strips tags and decodes the handful of entities DocBook actually emits.
+ *
+ * Shared with `commandDocs.ts`, which reads the same guide in a different shape.
+ */
+export function plainText(html: string): string {
 	return html
 		.replace(/<[^>]+>/g, ' ')
 		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))

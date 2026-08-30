@@ -25,12 +25,15 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyze, type GdlDocument } from './gdl/analyzer';
 import { invalidateLibPartCache } from './gdl/libpart';
 import { setReferenceRoot } from './gdl/referenceDocs';
+import { setCommandDocsRoot } from './gdl/commandDocs';
 import { provideCompletion, resolveCompletion } from './providers/completion';
 import { provideDefinition } from './providers/definition';
 import { provideHover } from './providers/hover';
 import { provideDiagnostics } from './providers/diagnostics';
 import { provideFormattingEdits, type AlignOptions } from './providers/format';
+import { provideInlayHints } from './providers/inlayHints';
 import { provideScriptEndMarkers } from './providers/markers';
+import { provideSignatureHelp } from './providers/signatureHelp';
 import { provideRename, resolveRenameTarget, RenameError, type TextResolver } from './providers/rename';
 
 const connection = createConnection(ProposedFeatures.all);
@@ -87,7 +90,9 @@ connection.onInitialize((params: InitializeParams) => {
 	hasConfigurationCapability = !!capabilities.workspace?.configuration;
 	hasWorkspaceFolderCapability = !!capabilities.workspace?.workspaceFolders;
 
-	setReferenceRoot((params.initializationOptions as GdlInitializationOptions | undefined)?.referenceRoot);
+	const referenceRoot = (params.initializationOptions as GdlInitializationOptions | undefined)?.referenceRoot;
+	setReferenceRoot(referenceRoot);
+	setCommandDocsRoot(referenceRoot);
 
 	const result: InitializeResult = {
 		capabilities: {
@@ -100,6 +105,15 @@ connection.onInitialize((params: InitializeParams) => {
 			},
 			hoverProvider: true,
 			definitionProvider: true,
+			// GDL commands take no brackets, so there is no `(` to open on: a
+			// space after the command word is what starts a signature, and a
+			// comma moves it to the next argument.
+			signatureHelpProvider: {
+				triggerCharacters: [' ', ','],
+				retriggerCharacters: [','],
+			},
+			// Bitmask arguments decoded in place — see `providers/inlayHints.ts`.
+			inlayHintProvider: { resolveProvider: false },
 			// Alignment only — see `providers/format.ts`. Registering it here is
 			// what gives Format Document, Format Selection and `formatOnSave`
 			// their edits; the `GDL: Align argument lists` command asks this
@@ -262,6 +276,18 @@ connection.onDocumentRangeFormatting((params) => {
 		alignOptions(params.options),
 		params.range,
 	);
+});
+
+connection.onSignatureHelp((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return null;
+	return provideSignatureHelp(getAnalysis(textDocument), textDocument, params.position);
+});
+
+connection.languages.inlayHint.on((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return [];
+	return provideInlayHints(getAnalysis(textDocument), textDocument, params.range);
 });
 
 /**
