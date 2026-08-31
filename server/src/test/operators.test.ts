@@ -69,6 +69,51 @@ test('a commented-out line inside a continuation does not truncate it', () => {
 	assert.deepEqual(check(text), []);
 });
 
+test('an operator running into the next clause is flagged', () => {
+	// Duschabtrennung AOL/1d.gdl, reported by the project owner and the only
+	// place in the corpus this shape occurs. The `\\` carries the line on, so the
+	// trailing `|` does not end the statement — it swallows the `THEN` below it,
+	// and Archicad refuses the script with one error at the very end.
+	const text =
+		'if  i_cabin_form = CABINFORM_U_RECT | \\\n' +
+		'\ti_cabin_form = CABINFORM_U_ROUNDED | \\\n' +
+		'then\n' +
+		'\tfoo = bar\n' +
+		'endif';
+	assert.deepEqual(check(text), [
+		'`|` has no value on its right — the expression runs into `then`.',
+	]);
+	// The same slip in each of the other clause-opening words.
+	assert.deepEqual(check('while a > 0 & \\\ndo\n\ta = a - 1\nendwhile'), [
+		'`&` has no value on its right — the expression runs into `do`.',
+	]);
+	assert.deepEqual(check('if a then x = 1 + else\n\ty = 2\nendif'), [
+		'`+` has no value on its right — the expression runs into `else`.',
+	]);
+});
+
+test('the word operators are judged like the symbols', () => {
+	// `AND`, `OR`, `EXOR` and `MOD` are identifiers to the lexer, so every check
+	// here walked past them until they were named. 6158 uses in the corpus, none
+	// of them missing an operand — these are all typos.
+	assert.deepEqual(check('if a = 1 or \\\n\tb = 2 or \\\nthen\n\tfoo = 1\nendif'), [
+		'`or` has no value on its right — the expression runs into `then`.',
+	]);
+	assert.deepEqual(check('a = b and'), ['`and` has no value on its right — the statement ends here.']);
+	assert.deepEqual(check('a = b and or c'), [
+		'Two operators in a row — `and or`. `or` has no value on its left.',
+	]);
+	assert.deepEqual(check('a = (b exor )'), ['`exor` has no value on its right.']);
+	assert.deepEqual(check('a = mod 2'), [
+		'Two operators in a row — `= mod`. `mod` has no value on its left.',
+	]);
+	// ...and the ordinary uses stay silent.
+	assert.deepEqual(check('if a > 1 and b < 2 then addx 1'), []);
+	assert.deepEqual(check('a = b mod 2'), []);
+	assert.deepEqual(check('_bits = (a exor b) and 7'), []);
+	assert.deepEqual(check('if a and -1 then addx 1'), []);
+});
+
 test('a run of operators is reported once', () => {
 	assert.deepEqual(check('a = 1 + + + 2'), [
 		'Two operators in a row — `+ +`. Only `-` may follow an operator, as a sign.',
