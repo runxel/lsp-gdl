@@ -64,9 +64,11 @@ import { groupNameAt, groupNames, type GroupName } from '../gdl/groups';
 import { parameterNameAt } from '../gdl/paramNames';
 import {
 	labelDefinitionKeys,
+	labelDefinitions,
 	labelKey,
 	labelSitesFor,
 	labelSiteAt,
+	looseLabelKey,
 	type LabelSite,
 } from '../gdl/labels';
 import { masterScriptFor } from '../gdl/masterScript';
@@ -435,14 +437,30 @@ function renameLabel(
 	// The new name must not already be a subroutine a jump in reach could mean.
 	// For a script-local label that is this script and the master; for one the
 	// master publishes it is every script of the part, since renaming onto a
-	// sibling's own label would put two subroutines behind one name there.
-	// Re-spelling a name in another case keeps its key, and so can never clash.
+	// sibling's own label would put two subroutines behind one name there — and
+	// a reused label stops the object outright.
+	//
+	// A name differing from an existing label only in case is refused as well,
+	// though GDL would tell the two apart: it is the near-miss
+	// `providers/labels.ts` warns about, and a rename has no business making
+	// one. The label being renamed is exempt, since its own definition is what
+	// moves — which is what leaves `"tapPage"` → `"TapPage"` free, the rename
+	// anyone spelling a name consistently would reach for.
+	const newLoose = looseLabelKey(newName);
 	const refuseIfTaken = (other: GdlDocument, where: string) => {
 		if (newKey === label.key) return;
-		if (!labelDefinitionKeys(other).has(newKey)) return;
+		const taken = labelDefinitions(other).find(
+			(definition) =>
+				definition.key !== label.key && looseLabelKey(definition.name) === newLoose,
+		);
+		if (!taken) return;
 		throw new RenameError(
-			`\`${newName}\` is already a jump label in ${where} — two subroutines cannot ` +
-				'share a name where one jump could mean either.',
+			taken.key === newKey
+				? `\`${newName}\` is already a jump label in ${where} — two subroutines ` +
+					'cannot share a name, and a reused label stops the object.'
+				: `\`${taken.name}\` is already a jump label in ${where}, and ` +
+					`\`${newName}\` differs from it only in case — GDL would take them as ` +
+					'two subroutines, which reads as one.',
 		);
 	};
 

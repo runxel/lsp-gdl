@@ -82,12 +82,28 @@ const NUMERIC_RE = /^\d+(\.\d+)?$/;
 /**
  * A label key both sides agree on.
  *
- * Names are matched case-insensitively, as everything in GDL is, and numeric
- * labels by value — so `0100:` answers `GOSUB 100`.
+ * A **numeric** label is matched by value, so `0100:` answers `GOSUB 100`.
+ *
+ * A **named** one is matched verbatim, which is the one place GDL is not
+ * case-insensitive: confirmed by the project owner, a named label is compared
+ * as the string literal it is, so `"TapPage":` and `"tappage":` are two
+ * different subroutines and `GOSUB "TAPPAGE"` reaches neither. That reads as
+ * one name to anyone editing the file, which is why `providers/labels.ts`
+ * flags the near-miss rather than quietly resolving it — see `looseLabelKey`.
  */
 export function labelKey(raw: string): string {
 	const n = Number(raw);
-	return NUMERIC_RE.test(raw) && Number.isFinite(n) ? String(n) : raw.toLowerCase();
+	return NUMERIC_RE.test(raw) && Number.isFinite(n) ? String(n) : raw;
+}
+
+/**
+ * The key two labels share when they differ only in case.
+ *
+ * GDL tells them apart; a reader does not. This is what finds the misleading
+ * pair, and it is never used to resolve a jump.
+ */
+export function looseLabelKey(raw: string): string {
+	return labelKey(raw).toLowerCase();
 }
 
 /** The name a label token spells, quotes stripped. */
@@ -208,7 +224,15 @@ export function labelSites(doc: GdlDocument): LabelSite[] {
 			forEachLiteralAssignment(
 				stmt,
 				(head) => vars.has(head),
-				(value, key) => sites.push({ kind: 'alias', spelling: 'named', key, token: value }),
+				// `indirect.ts` lower-cases its key, which is how its other callers
+				// index a name; a named label keeps its case.
+				(value) =>
+					sites.push({
+						kind: 'alias',
+						spelling: 'named',
+						key: labelKey(labelName(value)),
+						token: value,
+					}),
 			);
 		}
 	}

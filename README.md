@@ -12,7 +12,7 @@ If not already done, `vscode-gdl` will be installed alongside (it's declared as 
 
 ## Status
 
-Solid but still quite early. The foundations are in place and have been tested against a corpus of ~2500 real GDL scripts.
+Solid but still quite early. The foundations are in place and have been tested against a corpus of ~3000 real GDL scripts.
 
 
 **Working**

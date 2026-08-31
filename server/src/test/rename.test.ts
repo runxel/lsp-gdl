@@ -389,8 +389,26 @@ test('a label name is a string, so it may hold spaces but not a quote', () => {
 test('a subroutine cannot be renamed onto another of the same script', () => {
 	const script = ['gosub "a"', 'end', '"a":', 'return', '"b":', 'return'].join('\n');
 	assert.throws(() => renameLabelIn('3d.gdl', script, '"a":', 'b'), RenameError);
-	// Its own name in another case is a re-spelling, not a clash.
+	// Its own name in another case is a re-spelling, not a clash — which is the
+	// rename anyone tidying the spelling of a label would reach for.
 	assert.equal(renameLabelIn('3d.gdl', script, '"a":', 'A').changes![scriptUri('3d.gdl')].length, 2);
+	// Another label's name in another case is refused all the same. GDL would
+	// tell `B` from `b`, but nobody reading the script would — it is the
+	// near-miss `providers/labels.ts` warns about, and a rename must not make
+	// one.
+	assert.throws(() => renameLabelIn('3d.gdl', script, '"a":', 'B'), RenameError);
+});
+
+test('a jump in another case is a different label, and is left alone', () => {
+	// A named label is compared as a string literal, so `GOSUB "A"` does not
+	// name `"a":` — rewriting it would point a live jump somewhere new.
+	const script = ['gosub "a"', 'gosub "A"', 'end', '"a":', 'return'].join('\n');
+	const edits = renameLabelIn('3d.gdl', script, '"a":', 'draw').changes![scriptUri('3d.gdl')];
+	assert.equal(edits.length, 2);
+	assert.deepEqual(
+		edits.map((e) => e.range.start.line).sort(),
+		[0, 3],
+	);
 });
 
 test('a subroutine in the master script renames across the library part', () => {

@@ -40,8 +40,10 @@ test('PARAMETERS writes are marked as parameter writes', () => {
 });
 
 test('both label spellings are collected', () => {
-	const doc = analyze(URI_3D, '100:\n\treturn\n"namedRoutine":\n\treturn');
-	assert.deepEqual([...doc.labels.keys()].sort(), ['100', 'namedroutine']);
+	// A named label keeps its case — it is compared as a string literal, unlike
+	// everything else in GDL — while a numeric one is keyed by value.
+	const doc = analyze(URI_3D, '0100:\n\treturn\n"namedRoutine":\n\treturn');
+	assert.deepEqual([...doc.labels.keys()].sort(), ['100', 'namedRoutine']);
 });
 
 test('a label ends its own statement', () => {

@@ -10,6 +10,7 @@
  * gracefully on code it does not understand.
  */
 
+import { labelKey } from './labels';
 import { tokenize, type Token } from './lexer';
 import { scriptKindFromUri, type ScriptKind } from './scriptKind';
 
@@ -166,7 +167,10 @@ function analyzeStatements(statements: readonly Statement[]) {
 			toks[1].text === ':';
 		if (isLabel) {
 			const name = first.type === 'string' ? first.text.slice(1, -1) : first.text;
-			const key = name.toLowerCase();
+			// Not the usual lower-cased key: a named label is compared as a
+			// string literal, so only a numeric one is normalised. See
+			// `labelKey`.
+			const key = labelKey(name);
 			if (!labels.has(key)) labels.set(key, { name, definedAt: first.start });
 			continue;
 		}

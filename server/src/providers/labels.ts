@@ -26,18 +26,26 @@
  * which can be resolved without running the script. As elsewhere in this
  * server, an unknowable name is left alone rather than guessed at.
  *
- * The other half of this file is the mirror image: a **name that answers two
- * subroutines**. A label defined twice in one script, or once here and once in
- * the master script that runs ahead of it, leaves a `GOSUB` naming two
- * routines — so one of them is unreachable, and nothing in the guide says
- * which. That is a copy-paste leftover rather than a jump that fails outright,
- * so it is reported as a warning where the missing label is an error.
+ * The other half of this file is the mirror image: a **name reused for two
+ * subroutines**. Confirmed by the project owner, and stated nowhere in the
+ * guide: a reused label is a **hard failure**. Archicad detects it and the
+ * object does not run — so this is an error, exactly as the missing label is,
+ * and for the same reason. It counts as reuse whether the second definition is
+ * in this script or in the **master script** that runs ahead of it, the two
+ * being one program by the time labels are resolved.
  *
- * Both spellings collide the way a jump matches them: case-insensitively for a
- * name and by value for a number, so `0100:` and `100:` are one label defined
- * twice. The corpus holds neither shape — 2458 files, 0 duplicates and 0
- * master collisions — which is why `labels.test.ts` carries the whole proof
- * that these fire, as it does for `commas.ts` and `operators.ts`.
+ * A collision is judged the way a jump matches, and that is not the usual GDL
+ * rule. `0100:` and `100:` are one label, a numeric target being matched by
+ * value. `"TapPage":` and `"tappage":` are **not** — a named label is compared
+ * as the string literal it is, so those are two distinct subroutines and no
+ * jump can reach both. Which is precisely the trap: they read as one name. So
+ * a pair differing only in case is reported too, as a **warning** — nothing is
+ * broken, but nothing is what it looks like either.
+ *
+ * The corpus holds none of the three — 2458 files, 0 reuses, 0 master
+ * collisions and 0 case near-misses — which is why `labels.test.ts` carries
+ * the whole proof that they fire, as it does for `commas.ts` and
+ * `operators.ts`.
  *
  * What a jump is, and how a label name is keyed, live in `gdl/labels.ts` —
  * rename reads a label through the same model.
@@ -52,6 +60,7 @@ import {
 	labelDefinitions,
 	labelKey,
 	labelName,
+	looseLabelKey,
 	type LabelDefinition,
 } from '../gdl/labels';
 import { masterScriptFor, type TextResolver } from '../gdl/masterScript';
@@ -61,17 +70,13 @@ export const SOURCE = 'gdl';
 const JUMPS = new Set(['gosub', 'goto']);
 
 /**
- * How two spellings of one label differ, where they do — `0100:` against
- * `100:`, `"TapPage":` against `"tapPage":`. Worth saying out loud, since the
- * two read as different names until you know how a jump matches them.
+ * The note that explains a numeric pair spelt two ways — `0100:` against
+ * `100:`. They read as different labels until you know a numeric target is
+ * matched by value.
  */
 function sameLabelNote(a: LabelDefinition, b: LabelDefinition): string {
-	if (a.name === b.name) return '';
-	const how =
-		a.spelling === 'numeric'
-			? 'a numeric label is matched by value'
-			: 'names are matched case-insensitively';
-	return ` \`${a.name}\` and \`${b.name}\` are one label: ${how}.`;
+	if (a.name === b.name || a.spelling !== 'numeric') return '';
+	return ` \`${a.name}\` and \`${b.name}\` are one label: a numeric label is matched by value.`;
 }
 
 export function provideLabelDiagnostics(
@@ -81,35 +86,45 @@ export function provideLabelDiagnostics(
 ): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 
-	// A label defined twice in this script. This needs nothing from the rest of
-	// the library part, so it is judged before the master script is looked for,
-	// and it stands outside a library part too.
+	// A label defined twice in this script, and its near-miss. Neither needs
+	// anything from the rest of the library part, so both are judged before the
+	// master script is looked for, and both stand outside a library part too.
 	const firstDefinition = new Map<string, LabelDefinition>();
+	const firstLoosely = new Map<string, LabelDefinition>();
 	for (const definition of labelDefinitions(doc)) {
+		const loose = looseLabelKey(definition.name);
 		const first = firstDefinition.get(definition.key);
-		if (!first) {
-			firstDefinition.set(definition.key, definition);
-			continue;
-		}
-		const firstRange = {
-			start: td.positionAt(first.token.start),
-			end: td.positionAt(first.token.end),
+		const similar = firstLoosely.get(loose);
+		if (!firstDefinition.has(definition.key)) firstDefinition.set(definition.key, definition);
+		if (!firstLoosely.has(loose)) firstLoosely.set(loose, definition);
+		if (!first && !similar) continue;
+
+		const previous = first ?? (similar as LabelDefinition);
+		const previousRange = {
+			start: td.positionAt(previous.token.start),
+			end: td.positionAt(previous.token.end),
 		};
+		const line = previousRange.start.line + 1;
 		diagnostics.push({
-			severity: DiagnosticSeverity.Warning,
+			severity: first ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
 			range: {
 				start: td.positionAt(definition.token.start),
 				end: td.positionAt(definition.token.end),
 			},
-			message:
-				`Label \`${definition.name}\` is already defined in this script, ` +
-				`at line ${firstRange.start.line + 1}. A jump can only reach one of ` +
-				`the two.${sameLabelNote(first, definition)}`,
+			message: first
+				? `Label \`${definition.name}\` is already defined in this script, at ` +
+					`line ${line}. A reused label stops the object: Archicad detects it ` +
+					`and the script does not run.${sameLabelNote(first, definition)}`
+				: `Label \`${definition.name}\` differs from \`${previous.name}\` at line ` +
+					`${line} only in case. A named label is compared as a string literal, ` +
+					`so these are two subroutines, and no jump can reach both.`,
 			source: SOURCE,
 			relatedInformation: [
 				{
-					location: { uri: doc.uri, range: firstRange },
-					message: `First definition of \`${first.name}\`.`,
+					location: { uri: doc.uri, range: previousRange },
+					message: first
+						? `First definition of \`${previous.name}\`.`
+						: `\`${previous.name}\`, the label it reads as.`,
 				},
 			],
 		});
@@ -126,51 +141,72 @@ export function provideLabelDiagnostics(
 		master = masterScriptFor(doc.uri, doc.script, resolve);
 	}
 
-	// A name this script and the master script both define. It is reported on
-	// this script's definition rather than the master's: the master is shared by
-	// every script of the part, so the copy that turned up second is the one to
-	// look at.
+	// A name this script and the master script both define. That is the same
+	// reuse, the master running ahead of this script and the two resolving as
+	// one program — so it is the same error. It is reported on this script's
+	// definition rather than the master's: the master is shared by every script
+	// of the part, so the copy that turned up second is the one to look at.
 	if (master) {
 		const inMaster = new Map<string, LabelDefinition>();
+		const inMasterLoosely = new Map<string, LabelDefinition>();
 		for (const definition of labelDefinitions(master)) {
 			if (!inMaster.has(definition.key)) inMaster.set(definition.key, definition);
+			const loose = looseLabelKey(definition.name);
+			if (!inMasterLoosely.has(loose)) inMasterLoosely.set(loose, definition);
 		}
 		// Positions in the master are wanted only here, and a collision is rare
 		// enough that laying the text out for one costs nothing.
 		let masterTd: TextDocument | undefined;
 		for (const definition of firstDefinition.values()) {
 			const shared = inMaster.get(definition.key);
-			if (!shared) continue;
+			const similar = inMasterLoosely.get(looseLabelKey(definition.name));
+			if (!shared && !similar) continue;
+			const previous = shared ?? (similar as LabelDefinition);
 			masterTd ??= TextDocument.create(master.uri, td.languageId, 0, master.text);
 			const masterRange = {
-				start: masterTd.positionAt(shared.token.start),
-				end: masterTd.positionAt(shared.token.end),
+				start: masterTd.positionAt(previous.token.start),
+				end: masterTd.positionAt(previous.token.end),
 			};
+			const line = masterRange.start.line + 1;
 			diagnostics.push({
-				severity: DiagnosticSeverity.Warning,
+				severity: shared ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
 				range: {
 					start: td.positionAt(definition.token.start),
 					end: td.positionAt(definition.token.end),
 				},
-				message:
-					`Label \`${definition.name}\` is also defined in the master script, ` +
-					`at line ${masterRange.start.line + 1}. The master runs before this ` +
-					`script, so two subroutines share one name and a jump here can only ` +
-					`reach one of them.${sameLabelNote(shared, definition)}`,
+				message: shared
+					? `Label \`${definition.name}\` is also defined in the master script, ` +
+						`at line ${line}. The master runs before this script, so the label ` +
+						`is reused — which stops the object.` +
+						`${sameLabelNote(previous, definition)}`
+					: `Label \`${definition.name}\` differs from \`${previous.name}\` in the ` +
+						`master script, at line ${line}, only in case. A named label is ` +
+						`compared as a string literal, so these are two subroutines, and no ` +
+						`jump can reach both.`,
 				source: SOURCE,
 				relatedInformation: [
 					{
 						location: { uri: master.uri, range: masterRange },
-						message: `\`${shared.name}\` in the master script.`,
+						message: `\`${previous.name}\` in the master script.`,
 					},
 				],
 			});
 		}
 	}
 
+	// Both maps are keyed the way `labelKey` matches, so a named label is in
+	// reach only under its own spelling. The loose one is not for resolving —
+	// it names the near-miss in the message, a jump differing from a real label
+	// only in case being far likelier a typo than a coincidence.
 	const known = new Set<string>();
-	for (const key of doc.labels.keys()) known.add(labelKey(key));
-	if (master) for (const key of master.labels.keys()) known.add(labelKey(key));
+	const knownLoosely = new Map<string, string>();
+	const note = (key: string, name: string) => {
+		known.add(key);
+		const loose = looseLabelKey(name);
+		if (!knownLoosely.has(loose)) knownLoosely.set(loose, name);
+	};
+	for (const [key, info] of doc.labels) note(key, info.name);
+	if (master) for (const [key, info] of master.labels) note(key, info.name);
 
 	for (const stmt of doc.statements) {
 		const toks = stmt.tokens;
@@ -189,13 +225,18 @@ export function provideLabelDiagnostics(
 
 			const where =
 				doc.script === '1d' ? 'this script' : 'this script or the master script';
+			const nearMiss = knownLoosely.get(looseLabelKey(name));
 			diagnostics.push({
 				severity: DiagnosticSeverity.Error,
 				range: { start: td.positionAt(target.start), end: td.positionAt(target.end) },
 				message:
 					`No label \`${name}\` in ${where}. ` +
 					`\`${tok.text.toUpperCase()}\` to a missing label stops the object, ` +
-					`even where the jump is never reached.`,
+					`even where the jump is never reached.` +
+					(nearMiss
+						? ` \`${nearMiss}\` differs only in case, and a named label is ` +
+							'compared as a string literal.'
+						: ''),
 				source: SOURCE,
 			});
 		}
