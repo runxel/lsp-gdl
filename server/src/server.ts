@@ -26,6 +26,7 @@ import { analyze, type GdlDocument } from './gdl/analyzer';
 import { invalidateLibPartCache } from './gdl/libpart';
 import { setReferenceRoot } from './gdl/referenceDocs';
 import { setCommandDocsRoot } from './gdl/commandDocs';
+import { provideColorPresentations, provideDocumentColors } from './providers/colors';
 import { provideCompletion, resolveCompletion } from './providers/completion';
 import { provideDefinition } from './providers/definition';
 import { provideHover } from './providers/hover';
@@ -105,6 +106,9 @@ connection.onInitialize((params: InitializeParams) => {
 			},
 			hoverProvider: true,
 			definitionProvider: true,
+			// A GDL colour is three bare numbers between 0 and 1, which say
+			// nothing on the page — see `providers/colors.ts`.
+			colorProvider: true,
 			// GDL commands take no brackets, so there is no `(` to open on: a
 			// space after the command word is what starts a signature, and a
 			// comma moves it to the next argument.
@@ -206,6 +210,23 @@ connection.onDefinition((params) => {
 	const textDocument = documents.get(params.textDocument.uri);
 	if (!textDocument) return null;
 	return provideDefinition(getAnalysis(textDocument), textDocument, params.position);
+});
+
+connection.onDocumentColor((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return [];
+	return provideDocumentColors(getAnalysis(textDocument), textDocument);
+});
+
+connection.onColorPresentation((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return [];
+	return provideColorPresentations(
+		getAnalysis(textDocument),
+		textDocument,
+		params.color,
+		params.range,
+	);
 });
 
 connection.onPrepareRename((params) => {

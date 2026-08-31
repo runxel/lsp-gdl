@@ -41,6 +41,22 @@ for k = 1 to 9
 	grid[k][1] = k					! a computed index cannot be judged
 next k
 
+! --- colours: click a swatch in the gutter to open the picker ----------------
+
+define material "srf_body" 4, 0.329412, 0.4, 0.690196
+define material "srf_trim" MAT_MATTE,		! the type may be a constant
+	0.95,	0.95,	0.93
+define material "srf_computed" 2, red_r, green_r, blue_r	! computed: no swatch
+
+nFound = request("Pen_of_RGB", "1 1 1", nPenWhite)	! the colour is in the string
+
+! …and a colour reached through a variable is swatched at its assignment,
+! which is where a table of named colours actually wants editing:
+_rgbSlate = "0.329412 0.4 0.690196"
+_rgbBuilt = "0.5 0.5 " + STR(nWidth, 1, 1)	! computed: no swatch
+nFound = request("Pen_of_RGB", _rgbSlate, nPenSlate)
+nFound = request("Pen_of_RGB", _rgbBuilt, nPenBuilt)
+
 ! --- groups: ⌘-click a name to jump to where it was defined -------------------
 
 group "gr_leg"
