@@ -52,6 +52,20 @@ export type LabelSpelling = 'named' | 'numeric';
 /** What a site does with the name. */
 export type LabelSiteKind = 'definition' | 'jump' | 'alias';
 
+/**
+ * A label as written at its definition site.
+ *
+ * `name` is the spelling; `key` is what a jump matches, so two definitions
+ * sharing a key are two subroutines behind one name — see `labelDefinitions`.
+ */
+export interface LabelDefinition {
+	readonly key: string;
+	/** The name as written, quotes stripped. */
+	readonly name: string;
+	readonly spelling: LabelSpelling;
+	readonly token: Token;
+}
+
 export interface LabelSite {
 	readonly kind: LabelSiteKind;
 	readonly spelling: LabelSpelling;
@@ -202,6 +216,25 @@ export function labelSites(doc: GdlDocument): LabelSite[] {
 	return sites;
 }
 
+/**
+ * Every label definition in one script, in source order — **including repeats**.
+ *
+ * `GdlDocument.labels` keeps only the first definition of each name, which is
+ * the one a jump resolves against; this reports the definition sites
+ * themselves, so a script's second `"draw handle":` is visible to the check
+ * that flags it.
+ */
+export function labelDefinitions(doc: GdlDocument): LabelDefinition[] {
+	const definitions: LabelDefinition[] = [];
+	for (const stmt of doc.statements) {
+		const token = definitionToken(stmt);
+		if (!token) continue;
+		const name = labelName(token);
+		definitions.push({ key: labelKey(name), name, spelling: spellingOf(token), token });
+	}
+	return definitions;
+}
+
 /** Every site naming one label, definitions, jumps and aliases alike. */
 export function labelSitesFor(doc: GdlDocument, key: string): LabelSite[] {
 	return labelSites(doc).filter((site) => site.key === key);
@@ -218,10 +251,5 @@ export function labelSiteAt(doc: GdlDocument, offset: number): LabelSite | undef
 
 /** The keys of the labels this script defines. */
 export function labelDefinitionKeys(doc: GdlDocument): Set<string> {
-	const keys = new Set<string>();
-	for (const stmt of doc.statements) {
-		const definition = definitionToken(stmt);
-		if (definition) keys.add(labelKey(labelName(definition)));
-	}
-	return keys;
+	return new Set(labelDefinitions(doc).map((definition) => definition.key));
 }

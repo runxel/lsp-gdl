@@ -7,6 +7,10 @@
  * in a 2D script — so, as with `commas.ts` and `operators.ts`, the cases here
  * carry most of the proof that it still fires.
  *
+ * The two collision checks are the other way round: 2458 corpus files hold no
+ * label defined twice and none sharing a name with the master script, so the
+ * cases here carry the whole proof that they fire at all.
+ *
  * Every shape below is one the corpus actually holds.
  */
 
@@ -104,4 +108,69 @@ test('outside a library part nothing is reported', () => {
 	const uri = URI.file(join(FIXTURES, 'scratch', 'scripts', '3d.gdl')).toString();
 	const td = TextDocument.create(uri, 'gdl-hsf', 1, 'gosub "gone"');
 	assert.deepEqual(provideLabelDiagnostics(analyze(uri, 'gosub "gone"'), td, NO_TEXT), []);
+});
+
+test('a label defined twice in one script is reported', () => {
+	// A copy-paste leftover: two subroutines behind one name, so the `GOSUB`
+	// reaches one of them and the other is dead code.
+	const messages = check('gosub "draw"\nend\n"draw":\nreturn\n"draw":\nreturn');
+	assert.equal(messages.length, 1);
+	assert.match(messages[0], /Label `draw` is already defined in this script, at line 3/);
+	// The jump itself is not reported as well — the label does exist.
+	assert.doesNotMatch(messages[0], /No label/);
+});
+
+test('a repeated label is matched the way a jump matches it', () => {
+	// Numeric labels by value...
+	assert.match(
+		check('goto 100\nend\n0100:\nreturn\n100:\nreturn')[0],
+		/`0100` and `100` are one label: a numeric label is matched by value\./,
+	);
+	// ...and named ones case-insensitively.
+	assert.match(
+		check('gosub "TapPage"\nend\n"TapPage":\nreturn\n"tappage":\nreturn')[0],
+		/`TapPage` and `tappage` are one label: names are matched case-insensitively\./,
+	);
+	// Spelt identically, there is nothing to explain.
+	assert.doesNotMatch(check('"draw":\nreturn\n"draw":\nreturn')[0], /are one label/);
+});
+
+test('a third definition is reported too, always against the first', () => {
+	const messages = check('"draw":\nreturn\n"draw":\nreturn\n"draw":\nreturn');
+	assert.equal(messages.length, 2);
+	for (const message of messages) assert.match(message, /at line 1\./);
+});
+
+test('two labels of different names are left alone', () => {
+	assert.deepEqual(check('"draw":\nreturn\n"erase":\nreturn'), []);
+	assert.deepEqual(check('100:\nreturn\n200:\nreturn'), []);
+});
+
+test('a label repeated outside a library part is still reported', () => {
+	// Unlike the missing-label check, this one needs nothing from the part.
+	const uri = URI.file(join(FIXTURES, 'scratch', 'scripts', '3d.gdl')).toString();
+	const text = '"draw":\nreturn\n"draw":\nreturn';
+	const td = TextDocument.create(uri, 'gdl-hsf', 1, text);
+	const messages = provideLabelDiagnostics(analyze(uri, text), td, NO_TEXT);
+	assert.equal(messages.length, 1);
+	assert.match(messages[0].message, /already defined in this script/);
+});
+
+test('a label sharing its name with a master-script one is reported', () => {
+	const master = '"shared - init":\nreturn';
+	const resolve: TextResolver = (uri) => (uri === uriFor('1d.gdl') ? master : undefined);
+
+	const messages = check('gosub "shared - init"\nend\n"shared - init":\nreturn', '3d.gdl', resolve);
+	assert.equal(messages.length, 1);
+	assert.match(
+		messages[0],
+		/Label `shared - init` is also defined in the master script, at line 1/,
+	);
+	// A name the master does not define is nobody's business.
+	assert.deepEqual(check('"local only":\nreturn', '3d.gdl', resolve), []);
+});
+
+test('the master script is not judged against itself', () => {
+	// Nothing runs before `1d.gdl`, so it can collide with no other script.
+	assert.deepEqual(check('"shared - init":\nreturn', '1d.gdl'), []);
 });

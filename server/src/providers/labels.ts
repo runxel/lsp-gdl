@@ -26,42 +26,151 @@
  * which can be resolved without running the script. As elsewhere in this
  * server, an unknowable name is left alone rather than guessed at.
  *
+ * The other half of this file is the mirror image: a **name that answers two
+ * subroutines**. A label defined twice in one script, or once here and once in
+ * the master script that runs ahead of it, leaves a `GOSUB` naming two
+ * routines — so one of them is unreachable, and nothing in the guide says
+ * which. That is a copy-paste leftover rather than a jump that fails outright,
+ * so it is reported as a warning where the missing label is an error.
+ *
+ * Both spellings collide the way a jump matches them: case-insensitively for a
+ * name and by value for a number, so `0100:` and `100:` are one label defined
+ * twice. The corpus holds neither shape — 2458 files, 0 duplicates and 0
+ * master collisions — which is why `labels.test.ts` carries the whole proof
+ * that these fire, as it does for `commas.ts` and `operators.ts`.
+ *
  * What a jump is, and how a label name is keyed, live in `gdl/labels.ts` —
  * rename reads a label through the same model.
  */
 
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
-import type { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument } from '../gdl/analyzer';
 import { libPartFor } from '../gdl/libpart';
-import { jumpTarget, labelKey, labelName } from '../gdl/labels';
+import {
+	jumpTarget,
+	labelDefinitions,
+	labelKey,
+	labelName,
+	type LabelDefinition,
+} from '../gdl/labels';
 import { masterScriptFor, type TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
 
 const JUMPS = new Set(['gosub', 'goto']);
 
+/**
+ * How two spellings of one label differ, where they do — `0100:` against
+ * `100:`, `"TapPage":` against `"tapPage":`. Worth saying out loud, since the
+ * two read as different names until you know how a jump matches them.
+ */
+function sameLabelNote(a: LabelDefinition, b: LabelDefinition): string {
+	if (a.name === b.name) return '';
+	const how =
+		a.spelling === 'numeric'
+			? 'a numeric label is matched by value'
+			: 'names are matched case-insensitively';
+	return ` \`${a.name}\` and \`${b.name}\` are one label: ${how}.`;
+}
+
 export function provideLabelDiagnostics(
 	doc: GdlDocument,
 	td: TextDocument,
 	resolve: TextResolver,
 ): Diagnostic[] {
+	const diagnostics: Diagnostic[] = [];
+
+	// A label defined twice in this script. This needs nothing from the rest of
+	// the library part, so it is judged before the master script is looked for,
+	// and it stands outside a library part too.
+	const firstDefinition = new Map<string, LabelDefinition>();
+	for (const definition of labelDefinitions(doc)) {
+		const first = firstDefinition.get(definition.key);
+		if (!first) {
+			firstDefinition.set(definition.key, definition);
+			continue;
+		}
+		const firstRange = {
+			start: td.positionAt(first.token.start),
+			end: td.positionAt(first.token.end),
+		};
+		diagnostics.push({
+			severity: DiagnosticSeverity.Warning,
+			range: {
+				start: td.positionAt(definition.token.start),
+				end: td.positionAt(definition.token.end),
+			},
+			message:
+				`Label \`${definition.name}\` is already defined in this script, ` +
+				`at line ${firstRange.start.line + 1}. A jump can only reach one of ` +
+				`the two.${sameLabelNote(first, definition)}`,
+			source: SOURCE,
+			relatedInformation: [
+				{
+					location: { uri: doc.uri, range: firstRange },
+					message: `First definition of \`${first.name}\`.`,
+				},
+			],
+		});
+	}
+
 	// The set of labels in reach is what makes this checkable, so bail out
 	// whenever any part of it is unknown. Outside a library part the master
 	// script cannot be found at all, and a jump may well be answered there.
 	let master: GdlDocument | undefined;
 	if (doc.script !== '1d') {
-		if (!libPartFor(doc.uri)) return [];
+		if (!libPartFor(doc.uri)) return diagnostics;
 		// Undefined here means the part genuinely has no master script, so
 		// there are no inherited labels — not that we failed to look.
 		master = masterScriptFor(doc.uri, doc.script, resolve);
 	}
 
+	// A name this script and the master script both define. It is reported on
+	// this script's definition rather than the master's: the master is shared by
+	// every script of the part, so the copy that turned up second is the one to
+	// look at.
+	if (master) {
+		const inMaster = new Map<string, LabelDefinition>();
+		for (const definition of labelDefinitions(master)) {
+			if (!inMaster.has(definition.key)) inMaster.set(definition.key, definition);
+		}
+		// Positions in the master are wanted only here, and a collision is rare
+		// enough that laying the text out for one costs nothing.
+		let masterTd: TextDocument | undefined;
+		for (const definition of firstDefinition.values()) {
+			const shared = inMaster.get(definition.key);
+			if (!shared) continue;
+			masterTd ??= TextDocument.create(master.uri, td.languageId, 0, master.text);
+			const masterRange = {
+				start: masterTd.positionAt(shared.token.start),
+				end: masterTd.positionAt(shared.token.end),
+			};
+			diagnostics.push({
+				severity: DiagnosticSeverity.Warning,
+				range: {
+					start: td.positionAt(definition.token.start),
+					end: td.positionAt(definition.token.end),
+				},
+				message:
+					`Label \`${definition.name}\` is also defined in the master script, ` +
+					`at line ${masterRange.start.line + 1}. The master runs before this ` +
+					`script, so two subroutines share one name and a jump here can only ` +
+					`reach one of them.${sameLabelNote(shared, definition)}`,
+				source: SOURCE,
+				relatedInformation: [
+					{
+						location: { uri: master.uri, range: masterRange },
+						message: `\`${shared.name}\` in the master script.`,
+					},
+				],
+			});
+		}
+	}
+
 	const known = new Set<string>();
 	for (const key of doc.labels.keys()) known.add(labelKey(key));
 	if (master) for (const key of master.labels.keys()) known.add(labelKey(key));
-
-	const diagnostics: Diagnostic[] = [];
 
 	for (const stmt of doc.statements) {
 		const toks = stmt.tokens;
