@@ -1,7 +1,7 @@
 /**
  * Diagnostics for GDL.
  *
- * Six checks ship in v0, chosen because each catches a mistake that is both
+ * Seven checks ship in v0, chosen because each catches a mistake that is both
  * common and invisible until Archicad refuses to open the object:
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
@@ -13,6 +13,8 @@
  *   5. Brackets left unbalanced — `atn(a / b[1]))`.
  *   6. A `GOSUB`/`GOTO` naming a label that does not exist, which stops the
  *      object whether or not the jump is ever reached.
+ *   7. A GDL keyword claimed as a variable name — `addx = foo + bar`, which
+ *      Archicad refuses just as silently.
  *
  * Deliberately NOT checked yet: undefined variables. GDL lets Archicad inject
  * names from several directions (fixed parameters, macro `PARAMETERS ALL`,
@@ -33,6 +35,7 @@ import { provideParameterRefDiagnostics } from './paramRefs';
 import { provideOperatorDiagnostics } from './operators';
 import { provideParenDiagnostics } from './parens';
 import { provideLabelDiagnostics } from './labels';
+import { provideReservedNameDiagnostics } from './reservedNames';
 import type { TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
@@ -242,6 +245,7 @@ export function provideDiagnostics(
 		...provideOperatorDiagnostics(doc, td),
 		...provideParenDiagnostics(doc, td),
 		...provideLabelDiagnostics(doc, td, resolve),
+		...provideReservedNameDiagnostics(doc, td),
 		...provideCommaDiagnostics(doc, td),
 		...provideArrayDiagnostics(doc, td),
 		...provideParameterRefDiagnostics(doc, td),

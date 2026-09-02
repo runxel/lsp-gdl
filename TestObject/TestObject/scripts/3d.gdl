@@ -88,13 +88,13 @@ nWidth = "wide"
 iDetailLevel = zzyzx / 2
 
 ! 5. a dictionary key will not widen from Integer to real
-dict box
-box.x = 1
-box.x = 1.5
+dict dims
+dims.x = 1
+dims.x = 1.5
 
 ! 6. an array inside a dictionary must hold a single type
-box.sizes[1] = 1
-box.sizes[2] = 2.5
+dims.sizes[1] = 1
+dims.sizes[2] = 2.5
 
 ! 7. exact equality between reals is unreliable
 if zzyzx = 2.5 then addz 0.1
@@ -119,3 +119,6 @@ if A > 1 then
 ! 13. unbalanced parenthesis
 abc = atn(_stich / ccenters.c[1].x))
 abc = atn(_stich / ccenters.c[1].x
+
+! 14. a GDL keyword claimed as a variable name
+addx = A + B

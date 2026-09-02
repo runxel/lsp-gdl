@@ -79,12 +79,46 @@ export function keywordsFor(script: ScriptKind | undefined): readonly GdlKeyword
 }
 
 /**
- * Names a GDL author must not use for their own variables. Globals and
- * fixed parameters are effectively reserved: assigning to one silently
- * changes behaviour rather than raising an error.
+ * The kinds of name an author may not claim for a variable, and how each is
+ * described when one is reported.
+ *
+ * The guide's rule (§ GDL Syntax, Identifiers) names keywords *and* globals:
+ * "Keywords and global variable names are determined by the program you're
+ * using GDL in; all other identifiers can be used as variable names." It
+ * contradicts itself on the globals a page later — "By using the `=` command,
+ * you can assign a numeric or string value to local and global variables" —
+ * and real code sides with the looser reading, GRAPHISOFT's own ACLib included.
+ * So only the keyword kinds are held against an author here; see
+ * `providers/reservedNames.ts` for the corpus behind that split.
  */
+const VARIABLE_NAME_CONFLICTS: Readonly<Partial<Record<KeywordKind, string>>> = {
+	statement: 'command',
+	function: 'function',
+	operator: 'operator',
+};
+
+/** How a conflicting keyword is described in prose, e.g. "command". */
+export function keywordKindLabel(kw: GdlKeyword): string | undefined {
+	return VARIABLE_NAME_CONFLICTS[kw.kind];
+}
+
+/**
+ * The keyword `name` collides with, or undefined when the name is the author's
+ * to use. One account of which names are off limits, read by the reserved-name
+ * diagnostic and by rename's refusal to hand one out as a new name.
+ *
+ * A dotted identifier is a path into a dictionary — `pt.start`, `_d.f` — and
+ * only its head names a variable, so that is the half looked up. The table's
+ * own dotted entries are all `Builtin.*` properties, which are never judged.
+ */
+export function reservedForVariables(name: string): GdlKeyword | undefined {
+	const head = name.split('.')[0];
+	if (!head) return undefined;
+	const kw = lookupWithVariants(head);
+	return kw && keywordKindLabel(kw) ? kw : undefined;
+}
+
+/** True when `name` may not be used for a variable. */
 export function isReservedName(name: string): boolean {
-	const kw = byName.get(name.toLowerCase());
-	if (!kw) return false;
-	return kw.kind === 'global' || kw.kind === 'fixparam' || kw.kind === 'statement';
+	return reservedForVariables(name) !== undefined;
 }
