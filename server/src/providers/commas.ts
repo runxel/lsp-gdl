@@ -46,7 +46,12 @@ export const SOURCE = 'gdl';
  *
  * Anything the keyword table calls a statement or an operator qualifies — `TO`,
  * `STEP`, `THEN`, `RANGE`, `PARAMETERS`, `MATERIAL`, `AND`… Globals and fixed
- * parameters do not: those are ordinary values.
+ * parameters do not: those are ordinary values — and neither do the keywords
+ * that *yield* one. `NSP`, `GET (n)`, `USE (n)`, `REQUEST (…)`, `PI` are read
+ * inside an expression, never run as a command, and the keyword table types
+ * them `function` for exactly that reason (see `scripts/gen-keywords.mjs`).
+ * While the list's sections typed them `statement`, every check in this file
+ * took `get(nsp)` for a command and the stranded-row shape below went unseen.
  */
 function isSyntaxWord(tok: Token): boolean {
 	if (tok.type !== 'identifier') return false;
@@ -82,15 +87,14 @@ const NO_COMMA_AFTER_FIRST = new Set([
  * Keywords that legitimately open a continuation line inside an argument list,
  * so finding one after a line-breaking comma proves nothing.
  *
- * `USE` and `NSP` are parameter-buffer operations used as values; the rest are
- * sub-clauses of the statement they follow (`DEFINE MATERIAL … ADDITIONAL_DATA`,
- * `VALUES … CUSTOM`, `CALL … PARAMETERS`). Every one of these was a false
- * positive on the corpus.
+ * These are sub-clauses of the statement they follow (`DEFINE MATERIAL …
+ * ADDITIONAL_DATA`, `VALUES … CUSTOM`, `CALL … PARAMETERS`). Every one of these
+ * was a false positive on the corpus. `USE`, `NSP` and `GET` used to be listed
+ * here as well, for the same reason — a row of a wrapped list may well be
+ * `get(nsp)` — but they are values, and now that the keyword table says so
+ * `isSyntaxWord` never brings them this far.
  */
 const CLAUSE_CONTINUATIONS = new Set([
-	'use',
-	'nsp',
-	'get',
 	'put',
 	'parameters',
 	'returned_parameters',
@@ -292,7 +296,19 @@ function isCommandWord(tok: Token): boolean {
 	return lookupWithVariants(tok.text)?.kind === 'statement';
 }
 
-/** A statement consisting of nothing but a value expression. */
+/**
+ * A statement consisting of nothing but a value expression.
+ *
+ * A value may be spelt with a keyword — `get(nsp)`, `use(3)`, `request(…)`,
+ * `pi` — which is why this asks `isCommandWord` rather than "is it a keyword":
+ * the table types those `function`, and a function is as much a value as a
+ * number is. Reported by the project owner on the row that made the
+ * distinction matter:
+ *
+ *     poly2_b nsp/3, mask          <- comma missing
+ *         gs_cont_pen, gs_cont_pen,
+ *         get(nsp)
+ */
 function isBareExpression(stmt: Statement): boolean {
 	if (stmt.tokens.length === 0) return false;
 	for (const tok of stmt.tokens) {

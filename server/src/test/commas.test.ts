@@ -80,8 +80,9 @@ test('an ordinary wrapped argument list is not flagged', () => {
 });
 
 test('clause keywords may legitimately open a continuation line', () => {
-	// Every one of these was a false positive on the corpus.
-	assert.deepEqual(check('poly2_b nsp / 3, 1 + 2,\n\tuse 4'), []);
+	// Every one of these was a false positive on the corpus. (`USE (n)` is how
+	// the guide spells it; the corpus never writes `USE 4` without brackets.)
+	assert.deepEqual(check('poly2_b nsp / 3, 1 + 2,\n\tuse(4)'), []);
 	assert.deepEqual(check('prism_ n, h,\n\tnsp'), []);
 	assert.deepEqual(check('define material "m", 0,\n\tadditional_data "x", 1'), []);
 	assert.deepEqual(check('values "thk" 0.01, 0.03,\n\tcustom'), []);
@@ -123,6 +124,28 @@ test('a list left standing by a missing comma is flagged', () => {
 	assert.deepEqual(check('prism_ 3, 0.4,\n\t0, 0, s\n\t1, 1, s'), [
 		'Missing comma — `1` on the next line reads as a statement of its own rather than the next argument.',
 	]);
+});
+
+test('a stranded row spelt with parameter-buffer values is still a row', () => {
+	// Reported by the project owner. `NSP`, `GET (n)` and `USE (n)` read the
+	// parameter buffer and are values, not commands — but the keyword list files
+	// them under "memory-related" next to `PUT`, and while the table typed them
+	// `statement` this row read as one and the missing comma went unseen.
+	assert.deepEqual(
+		check('poly2_b \tnsp/3, mask\r\n\t\t\t\tgs_cont_pen, gs_cont_pen,\r\n\t\t\t\tget(nsp)'),
+		[
+			'Missing comma — `gs_cont_pen` on the next line reads as a statement of its own rather than the next argument.',
+		],
+	);
+	assert.deepEqual(check('prism_ nsp/3, h\n\tuse(3), nsp'), [
+		'Missing comma — `use` on the next line reads as a statement of its own rather than the next argument.',
+	]);
+	// A value that *is* a keyword — `PI`, `REQUEST (…)` — is a row all the same.
+	assert.deepEqual(check('put 1, 2\n\tpi, request ("Name_of_material", i, s)'), [
+		'Missing comma — `pi` on the next line reads as a statement of its own rather than the next argument.',
+	]);
+	// Adjacent values inside a line: a buffer read counts as a value there too.
+	assert.deepEqual(check('put nsp 3'), ['Missing comma between `nsp` and `3`.']);
 });
 
 test('every stranded row of a coordinate list is reported', () => {

@@ -8,6 +8,24 @@
  * each name, WHICH SCRIPT it may legally appear in — the thing a TextMate
  * grammar fundamentally cannot express.
  *
+ * A section header decides the *kind* of everything under it, with one rule
+ * and one table laid over that, both about the same distinction — a name that
+ * yields a value inside an expression is not a command, whatever section the
+ * list files it under:
+ *
+ *   - **An entry spelt with a call — `GET()`, `REQUEST{2}()`, `IND(MATERIAL,
+ *     "ez")` — is a function.** The list writes every value-yielding name that
+ *     way, in whichever section it sits (`ADDGROUP()` under 3D, `OPEN()` under
+ *     i/o, `STORED_PAR_VALUE()` under migration), and the name is indexed
+ *     without the call so that `lookup('get')` finds it. Left as `GET()`, the
+ *     name was unreachable by any lookup at all.
+ *   - **`OVERRIDES` names the value-yielding entries spelt bare.** `NSP`, `USE`
+ *     and `PI` carry no brackets in the list but are read, never run.
+ *
+ * What the kind costs when it is wrong: `providers/commas.ts` takes any
+ * `statement` as a command that cannot be part of a value, so a stranded
+ * argument row ending in `get(nsp)` was never read as the value row it is.
+ *
  * Run: npm run gen:keywords
  */
 
@@ -30,6 +48,18 @@ const ALL = ['1d', '2d', '3d', 'vl', 'ui', 'pr', 'fwm', 'bwm'];
  * other script, so a 3D command there is legal-but-contextual. Diagnostics
  * treat 1d permissively — see server/src/providers/diagnostics.ts.
  */
+/**
+ * Entries whose section says `statement` but which yield a value and are never
+ * a command of their own. `USE (n)` and `NSP` read the parameter buffer — the
+ * guide writes `USE` with brackets, the list does not — and `PI` is a constant.
+ * The section's script set still applies; only the kind is corrected.
+ */
+const OVERRIDES = {
+	NSP: 'function',
+	USE: 'function',
+	PI: 'function',
+};
+
 const SECTIONS = {
 	'operators': { kind: 'operator', scripts: ALL },
 	'Common Keywords': { kind: 'statement', scripts: ALL },
@@ -106,7 +136,7 @@ function add(name, section, meta, note, syntax) {
 	}
 	entries.set(name, {
 		name,
-		kind: meta.kind,
+		kind: OVERRIDES[name] ?? meta.kind,
 		category: section,
 		scripts: [...meta.scripts],
 		...(meta.reserved ? { reserved: true } : {}),
@@ -159,8 +189,18 @@ for (const raw of text.split(/\r?\n/)) {
 		continue;
 	}
 
+	// `GET()`, `REQUEST{2}()`, `IND(MATERIAL, "ez")` — a name spelt with a call
+	// yields a value, whichever section it is filed under (see the header).
+	// Everything from the bracket on is dropped: `IND` is one function, not
+	// seven, and the argument shapes it was listed with are its documentation's
+	// business.
+	const call = body.indexOf('(');
+	if (call > 0 && body.endsWith(')')) {
+		add(body.slice(0, call).trim(), section, { ...meta, kind: 'function' }, note);
+		continue;
+	}
 	if (meta.kind === 'function') {
-		add(body.replace(/\(\)$/, ''), section, meta, note);
+		add(body, section, meta, note);
 		continue;
 	}
 
