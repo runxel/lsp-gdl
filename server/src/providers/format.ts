@@ -38,12 +38,12 @@
  *     adjoin. Any row without one breaks that edge, and the markers either side
  *     of the break have nothing to line up with. See `runsOf` and the note in
  *     `layout`.
- *   - **An operator a row ends on is right-aligned against that `\`.** A
- *     wrapped `IF` has no commas and so no table, which used to leave its `|`s
- *     floating wherever each condition happened to end. They get a column of
- *     their own just inside the continuation edge, and the last row — which
- *     ends the expression and carries no operator — leaves it empty so its `\`
- *     still lands underneath the others. See `splitTrailingOperator`.
+ *   - **An operator a row ends on is glued to that `\`.** A wrapped `IF` has no
+ *     commas and so no table, which used to leave its `|`s floating wherever
+ *     each condition happened to end. The two now stand together as one mark,
+ *     `|\`, right-aligned so that the `\`s still line up and a row that ends
+ *     the expression holds its `\` alone in the same column. See
+ *     `splitTrailingOperator`.
  *   - **Indentation is the author's.** Column 0 is never moved, so the columns
  *     after it are computed from where each row actually starts.
  *   - **Padding follows the editor.** `insertSpaces` decides tabs or spaces and
@@ -177,15 +177,28 @@ function nextStop(col: number, opts: AlignOptions): number {
 	return opts.insertSpaces ? col + 1 : (Math.floor(col / opts.tabSize) + 1) * opts.tabSize;
 }
 
-/** Whitespace carrying column `from` to column `target`. */
+/**
+ * Whitespace carrying column `from` to column `target`.
+ *
+ * Every column but one lands on a tab stop, so in a tabbed file this is a run
+ * of tabs and nothing else. The exception is the marker unit: a `\` glued to
+ * the operator in front of it is right-aligned, which puts the rows *without*
+ * an operator one to three columns past the stop the others start on. A tab
+ * cannot land between stops, so the remainder is spaces — the ordinary
+ * tabs-to-indent, spaces-to-align arrangement, and the only place here that
+ * needs it.
+ */
 function padding(from: number, target: number, opts: AlignOptions): string {
 	if (opts.insertSpaces) return ' '.repeat(Math.max(1, target - from));
 	let out = '';
 	let col = from;
-	while (col < target) {
-		col = (Math.floor(col / opts.tabSize) + 1) * opts.tabSize;
+	for (;;) {
+		const stop = (Math.floor(col / opts.tabSize) + 1) * opts.tabSize;
+		if (stop > target) break;
+		col = stop;
 		out += '\t';
 	}
+	out += ' '.repeat(Math.max(0, target - col));
 	return out || '\t';
 }
 
@@ -290,21 +303,26 @@ function readTail(row: Row, text: string): boolean {
 }
 
 /**
- * Splits a binary operator the row ends on out of its last cell, so it can take
- * a column of its own against the `\` below it.
+ * Splits a binary operator the row ends on out of its last cell, so it can be
+ * carried out to the `\` and set against it.
  *
- *     if  GLOB_MODPAR_NAME = "A"           | \
- *         GLOB_MODPAR_NAME = "len_shelf"   | \
- *         GLOB_MODPAR_NAME = "basin_depth"   \
+ *     if  GLOB_MODPAR_NAME = "A"          |\
+ *         GLOB_MODPAR_NAME = "len_shelf"  |\
+ *         GLOB_MODPAR_NAME = "basin_depth" \
  *     then
  *
  * A wrapped condition has no commas in it, so it is not a table and its cells
  * are never aligned — the only column it has is the `\`. Left inside the cell,
  * the operator therefore floats wherever the value below it happens to end, and
- * the eye loses the one mark that says the condition carries on. Right-aligned
- * it sits against the continuation instead, and the last row — the one that
- * ends the expression and so carries no operator — leaves the column empty and
- * keeps its `\` underneath the rest.
+ * the eye loses the one mark that says the condition carries on.
+ *
+ * So the two are set as **one mark**, with nothing between them: an operator
+ * standing a tab clear of the `\` is still hard to pick out, which is the whole
+ * complaint, and `|\` is how the shape is written by hand anyway. The pair is
+ * right-aligned on the `\`, so a row that ends the expression and carries no
+ * operator holds its `\` alone in the same column. The operator has no column
+ * of its own, which is why "a column of one is left as written" does not reach
+ * it: a lone `|` above a bare row comes out to meet the `\` like any other.
  *
  * Three conditions, each of them keeping this to the shape it is for:
  *
@@ -516,33 +534,38 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 	// a reader can see — that was the `call … parameters \ … returned_parameters \`
 	// shape, where the first marker was dragged out to the width of the second.
 	//
-	// A trailing operator rides on that same run rather than on a run of its
-	// own: it is aligned *against* the continuation edge, so the rows it may
-	// line up with are exactly the rows sharing that edge — including the last
-	// one of the run, which ends the expression and carries no operator at all.
-	const opTarget: (number | undefined)[] = rows.map(() => undefined);
-	const contTarget: (number | undefined)[] = rows.map(() => undefined);
-	/** Where the row's content ends: past its operator, where it has one. */
-	const opEnd = (i: number) => {
+	// A trailing operator has no column of its own: it is **glued to the `\`**,
+	// the two standing together as one mark. So the run's column is the `\`'s,
+	// the widest operator in the run says how far right that is, and each row's
+	// operator hangs off its left — which right-aligns the pair, and leaves a
+	// row that carries no operator holding the `\` on its own in the same
+	// place. A lone operator therefore moves like any other, its position being
+	// the `\`'s and not another operator's.
+	const opWidth = (i: number) => {
 		const op = rows[i].op;
-		if (!op) return lastEnd(i);
-		const written = text.slice(rows[i].cells[rows[i].cells.length - 1].end, op.start);
-		const from = opTarget[i] ?? advance(written, lastEnd(i), opts.tabSize);
-		return advance(text.slice(op.start, op.end), from, opts.tabSize);
+		return op ? op.end - op.start : 0;
 	};
+	const contTarget: (number | undefined)[] = rows.map(() => undefined);
 	for (const run of runsOf(rows, (r) => r.cont !== undefined)) {
-		const withOp = run.filter((i) => rows[i].op);
-		const target = columnOf(withOp, lastEnd);
-		for (const i of withOp) opTarget[i] = target;
-		const contCol = columnOf(run, opEnd);
-		for (const i of run) contTarget[i] = contCol;
+		const start = columnOf(run, lastEnd);
+		if (start === undefined) continue;
+		const target = start + Math.max(0, ...run.map(opWidth));
+		for (const i of run) contTarget[i] = target;
 	}
 	const contEnd = (i: number) => {
 		const r = rows[i];
-		if (!r.cont) return opEnd(i);
-		const prevEnd = r.op ? r.op.end : r.cells[r.cells.length - 1].end;
-		const from = contTarget[i] ?? advance(text.slice(prevEnd, r.cont.start), opEnd(i), opts.tabSize);
-		return from + 1;
+		if (!r.cont) return lastEnd(i);
+		const target = contTarget[i];
+		if (target !== undefined) return target + 1;
+		// A column of one, left exactly as written, so the `\` is wherever the
+		// author's own spacing puts it.
+		let col = lastEnd(i);
+		let from = r.cells[r.cells.length - 1].end;
+		if (r.op) {
+			col = advance(text.slice(from, r.op.start) + text.slice(r.op.start, r.op.end), col, opts.tabSize);
+			from = r.op.end;
+		}
+		return advance(text.slice(from, r.cont.start), col, opts.tabSize) + 1;
 	};
 	const commentRows = rows.map((_, i) => i).filter((i) => rows[i].comment);
 	const commentCol = columnOf(commentRows, contEnd);
@@ -555,13 +578,22 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 		let out = text.slice(r.lineStart, r.cells[0].start) + cellText(r, 0);
 		let col = endCol[i][0];
 
-		/** Rewrites one gap, or leaves it be when its column has no partner. */
-		const gap = (from: number, to: number, target: number | undefined) => {
-			const written = text.slice(from, to);
-			const pad = target === undefined ? written : padding(col, target, opts);
-			if (target !== undefined) rowGaps.push({ start: from, end: to, text: pad });
+		/** Rewrites one gap to exactly `pad`. */
+		const setGap = (from: number, to: number, pad: string) => {
+			rowGaps.push({ start: from, end: to, text: pad });
 			out += pad;
 			col = advance(pad, col, opts.tabSize);
+		};
+
+		/** Rewrites one gap, or leaves it be when its column has no partner. */
+		const gap = (from: number, to: number, target: number | undefined) => {
+			if (target === undefined) {
+				const written = text.slice(from, to);
+				out += written;
+				col = advance(written, col, opts.tabSize);
+				return;
+			}
+			setGap(from, to, padding(col, target, opts));
 		};
 
 		for (let c = 1; c < r.cells.length; c++) {
@@ -571,15 +603,21 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 		}
 
 		let prevEnd = r.cells[r.cells.length - 1].end;
+		const marker = contTarget[i];
 		if (r.op) {
-			gap(prevEnd, r.op.start, opTarget[i]);
+			// The operator hangs off the `\`'s left, so its column is the
+			// marker's less its own width.
+			gap(prevEnd, r.op.start, marker === undefined ? undefined : marker - opWidth(i));
 			const opText = text.slice(r.op.start, r.op.end);
 			out += opText;
 			col = advance(opText, col, opts.tabSize);
 			prevEnd = r.op.end;
 		}
 		if (r.cont) {
-			gap(prevEnd, r.cont.start, contTarget[i]);
+			// Nothing may stand between the operator and the `\`: the pair is
+			// one mark, and a gap is what made the operator hard to see.
+			if (r.op && marker !== undefined) setGap(prevEnd, r.cont.start, '');
+			else gap(prevEnd, r.cont.start, marker);
 			out += '\\';
 			col++;
 			prevEnd = r.cont.end;

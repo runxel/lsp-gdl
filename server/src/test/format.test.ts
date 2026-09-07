@@ -219,14 +219,14 @@ test('a lone trailing backslash is not dragged out to the table width', () => {
 test('backslashes on several rows line up with each other', () => {
 	// `then` is a row of this statement too — the `\` joined it — but it carries
 	// no marker of its own, so it takes no part in the column. The `|`s come
-	// with the `\`s: see the trailing-operator cases below.
+	// with the `\`s, glued to them: see the trailing-operator cases below.
 	assert.equal(
 		format(['if a | \\', '   bbbb | \\', '   c \\', 'then'].join('\n')),
-		['if a    | \\', '   bbbb | \\', '   c      \\', 'then'].join('\n'),
+		['if a    |\\', '   bbbb |\\', '   c     \\', 'then'].join('\n'),
 	);
 	assert.equal(
 		format(['x = a | \\', '    bbbbbb | \\', '    c'].join('\n'), TABS),
-		['x = a\t\t|\t\\', '    bbbbbb\t|\t\\', '    c'].join('\n'),
+		['x = a\t\t|\\', '    bbbbbb\t|\\', '    c'].join('\n'),
 	);
 });
 
@@ -247,11 +247,23 @@ test('a wrapped condition right-aligns its operators against the backslash', () 
 			].join('\n'),
 		),
 		[
-			'if\tGLOB_MODPAR_NAME = "A"               | \\',
-			'\tGLOB_MODPAR_NAME = "len_shelf_right" | \\',
-			'\tGLOB_MODPAR_NAME = "basin_depth"       \\',
+			'if\tGLOB_MODPAR_NAME = "A"               |\\',
+			'\tGLOB_MODPAR_NAME = "len_shelf_right" |\\',
+			'\tGLOB_MODPAR_NAME = "basin_depth"      \\',
 			'then',
 		].join('\n'),
+	);
+});
+
+test('a run with one operator still brings it out to the backslash', () => {
+	// Reported by the project owner. The operator has no column of its own, so
+	// the "a column of one is left as written" rule never applied to it: its
+	// place is the `\`'s, and the `\` here has a partner directly below.
+	assert.equal(
+		format(['if\ti_symb3D = TYPE_CONE |\t\\', '\ti_symb3D = TYPE_CONE_2\t\\', 'then'].join('\n'), TABS),
+		// The bare row's `\` clears the same column, which in a tabbed file
+		// takes the one space a tab cannot land on.
+		['if\ti_symb3D = TYPE_CONE\t|\\', '\ti_symb3D = TYPE_CONE_2\t \\', 'then'].join('\n'),
 	);
 });
 
@@ -261,7 +273,7 @@ test('the word spellings of the operators align too', () => {
 	// expression `operators.ts` had to be taught to see.
 	assert.equal(
 		format(['if a = 1 and \\', '   bbbb = 2 and \\', '   c = 3 \\', 'then'].join('\n')),
-		['if a = 1    and \\', '   bbbb = 2 and \\', '   c = 3        \\', 'then'].join('\n'),
+		['if a = 1    and\\', '   bbbb = 2 and\\', '   c = 3       \\', 'then'].join('\n'),
 	);
 });
 
@@ -276,7 +288,7 @@ test('a sign is left on the operand it belongs to', () => {
 test('a binary minus at the end of a row is moved like any other', () => {
 	assert.equal(
 		format(['x = a - \\', '    bbbb - \\', '    c'].join('\n')),
-		['x = a    - \\', '    bbbb - \\', '    c'].join('\n'),
+		['x = a    -\\', '    bbbb -\\', '    c'].join('\n'),
 	);
 });
 
