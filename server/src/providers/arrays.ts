@@ -38,6 +38,13 @@
  * reach is a leftover — nearly always a rename that missed a site, or a
  * parameter deleted from `paramlist.xml` while the script kept using it.
  *
+ * **Every site is reported**, not just the first of each name. One missing
+ * `DIM` is arguably one mistake, and reporting it once was the first thing
+ * tried — but a squiggle that appears only on a name's *earliest* use reads as
+ * the check not working at all, which is exactly how the project owner met it:
+ * a line pasted into a script that already used the same undeclared array was
+ * left clean. Each reference is its own failure at run time anyway.
+ *
  * **Too many indices.** `DIM` fixes how many dimensions an array has, and GDL
  * has only one and two dimensional arrays. `DIM a[]` followed by `a[1][3]`
  * subscripts a row that was never declared. Fewer indices than declared is
@@ -173,13 +180,6 @@ export function provideArrayDiagnostics(
 		}
 	}
 
-	// A missing `DIM` is one mistake however many times the array is read, and
-	// the corpus writes some of them twenty-five times in a file. So the name
-	// is reported once, at its first site — which is also where the missing
-	// declaration belongs. A surplus index is the opposite: each one is its own
-	// typo, so every one of those is reported.
-	const alreadyReported = new Set<string>();
-
 	const report = (
 		tok: Token,
 		length: number,
@@ -284,7 +284,6 @@ export function provideArrayDiagnostics(
 				!decl &&
 				libpart &&
 				!dotted &&
-				!alreadyReported.has(tok.lower) &&
 				!param?.dimensions &&
 				// A good few globals are arrays — `RAIL_COMPONENTS`,
 				// `STAIR2D_BREAKMARK_GEOM`, 1388 corpus sites in 89 files — and
@@ -295,7 +294,6 @@ export function provideArrayDiagnostics(
 				// they are never ours to judge.
 				!lookupWithVariants(tok.text)
 			) {
-				alreadyReported.add(tok.lower);
 				report(
 					tok,
 					tok.end - tok.start,

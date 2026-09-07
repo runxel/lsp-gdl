@@ -184,15 +184,87 @@ test('a lone trailing backslash is not dragged out to the table width', () => {
 
 test('backslashes on several rows line up with each other', () => {
 	// `then` is a row of this statement too — the `\` joined it — but it carries
-	// no marker of its own, so it takes no part in the column.
+	// no marker of its own, so it takes no part in the column. The `|`s come
+	// with the `\`s: see the trailing-operator cases below.
 	assert.equal(
 		format(['if a | \\', '   bbbb | \\', '   c \\', 'then'].join('\n')),
-		['if a |    \\', '   bbbb | \\', '   c      \\', 'then'].join('\n'),
+		['if a    | \\', '   bbbb | \\', '   c      \\', 'then'].join('\n'),
 	);
 	assert.equal(
 		format(['x = a | \\', '    bbbbbb | \\', '    c'].join('\n'), TABS),
-		['x = a |\t\t\t\\', '    bbbbbb |\t\\', '    c'].join('\n'),
+		['x = a\t\t|\t\\', '    bbbbbb\t|\t\\', '    c'].join('\n'),
 	);
+});
+
+// --- the trailing operator --------------------------------------------------
+
+test('a wrapped condition right-aligns its operators against the backslash', () => {
+	// Reported by the project owner. There are no commas in a condition, so it
+	// is not a table and its values are never aligned; left inside the cell the
+	// `|`s float wherever each comparison happens to end. The last row ends the
+	// expression, carries no operator, and keeps its `\` under the rest.
+	assert.equal(
+		format(
+			[
+				'if\tGLOB_MODPAR_NAME = "A" | \\',
+				'\tGLOB_MODPAR_NAME = "len_shelf_right" | \\',
+				'\tGLOB_MODPAR_NAME = "basin_depth" \\',
+				'then',
+			].join('\n'),
+		),
+		[
+			'if\tGLOB_MODPAR_NAME = "A"               | \\',
+			'\tGLOB_MODPAR_NAME = "len_shelf_right" | \\',
+			'\tGLOB_MODPAR_NAME = "basin_depth"       \\',
+			'then',
+		].join('\n'),
+	);
+});
+
+test('the word spellings of the operators align too', () => {
+	// `AND`, `OR`, `EXOR` and `MOD` are identifiers to the lexer, so they would
+	// otherwise be left inside the cell — the same half of every boolean
+	// expression `operators.ts` had to be taught to see.
+	assert.equal(
+		format(['if a = 1 and \\', '   bbbb = 2 and \\', '   c = 3 \\', 'then'].join('\n')),
+		['if a = 1    and \\', '   bbbb = 2 and \\', '   c = 3        \\', 'then'].join('\n'),
+	);
+});
+
+test('a sign is left on the operand it belongs to', () => {
+	// `-` and `+` are signs as well as operators. The `-` ending the second row
+	// has an operator on its left, not a value, so it belongs to the `3` below
+	// it and must not be dragged away from it.
+	const text = ['put 1,    \\', '    2 * - \\', '    3'].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('a binary minus at the end of a row is moved like any other', () => {
+	assert.equal(
+		format(['x = a - \\', '    bbbb - \\', '    c'].join('\n')),
+		['x = a    - \\', '    bbbb - \\', '    c'].join('\n'),
+	);
+});
+
+test('a lone trailing operator is left exactly where it is', () => {
+	// A column of one is nothing to line up with, the same rule the `\` obeys.
+	const text = ['x = a |    \\', '    bbbb'].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('an operator column does not cross a break in the backslashes', () => {
+	// The operator is aligned *against* the continuation edge, so it may only
+	// line up with rows sharing that edge. Here the two `\`s are a row apart, so
+	// neither they nor the `|`s in front of them have a partner, and the wider
+	// second condition does not drag the first one out.
+	const text = ['call "m",', '    a = 1 | \\', '        b,', '    c = 22222 | \\', '        d'].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('a row that is nothing but an operator is left alone', () => {
+	// There is no value for it to hang off, and `operators.ts` reports it.
+	const text = ['put 1, \\', '    +  \\', '    2'].join('\n');
+	assert.equal(format(text), text);
 });
 
 test('a lone backslash is not dragged out to meet a distant one', () => {

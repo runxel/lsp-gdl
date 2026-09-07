@@ -104,18 +104,25 @@ test('parameter arrays are left alone', () => {
 test('an array that was never declared is reported', () => {
 	// The shape the corpus actually holds: a rename left `pos_drain` behind
 	// while the parameter list moved on to `pos_drain_x` / `pos_drain_y`.
-	assert.deepEqual(checkInPart('circle2 pos_drain[1], pos_drain[2], 0.02'), [
+	const message =
 		'`pos_drain` is subscripted but never declared: no `DIM` reaches this script, ' +
-			'and `TestObject` has no parameter of that name.',
-	]);
+		'and `TestObject` has no parameter of that name.';
+	assert.deepEqual(checkInPart('circle2 pos_drain[1], 0.02'), [message]);
+	// It is the same mistake wherever the subscript sits, and a command wrapped
+	// around it changes nothing — the whole statement is walked, as in
+	// `groups.ts` and `labels.ts`, not just its head.
+	assert.deepEqual(checkInPart('add pos_def_x + pos_drain[1], 0, zzyzx'), [message]);
+	assert.deepEqual(checkInPart('if a then add pos_drain[1], 0, 0'), [message]);
 });
 
-test('a missing DIM is reported once, at its first site', () => {
-	// One missing declaration is one mistake, however many times the array is
-	// read — `Öffnung polygonal` reads its undeclared `z` twenty-five times.
-	assert.equal(checkInPart('z[1] = 0\nz[2] = 1\nx = z[1] + z[2]').length, 1);
-	// But two different names are two mistakes.
-	assert.equal(checkInPart('z[1] = 0\nw[1] = 0').length, 2);
+test('every site is reported, not just the first', () => {
+	// Reporting once per name was tried first and read as the check not
+	// working: a line pasted below an earlier use of the same array was left
+	// clean. `Waschbecken AOL/3d.gdl` is exactly that shape, its second
+	// `pos_drain` sitting a hundred lines under the first.
+	assert.equal(checkInPart('z[1] = 0\nz[2] = 1').length, 2);
+	// Two on one line are two subscripts and get one each.
+	assert.equal(checkInPart('z[n] = z[1]').length, 2);
 });
 
 test('every declaration in reach silences it', () => {

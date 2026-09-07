@@ -36,6 +36,12 @@
  *     adjoin. Any row without one breaks that edge, and the markers either side
  *     of the break have nothing to line up with. See `runsOf` and the note in
  *     `layout`.
+ *   - **An operator a row ends on is right-aligned against that `\`.** A
+ *     wrapped `IF` has no commas and so no table, which used to leave its `|`s
+ *     floating wherever each condition happened to end. They get a column of
+ *     their own just inside the continuation edge, and the last row — which
+ *     ends the expression and carries no operator — leaves it empty so its `\`
+ *     still lands underneath the others. See `splitTrailingOperator`.
  *   - **Indentation is the author's.** Column 0 is never moved, so the columns
  *     after it are computed from where each row actually starts.
  *   - **Padding follows the editor.** `insertSpaces` decides tabs or spaces and
@@ -76,6 +82,8 @@
 import type { Range, TextEdit } from 'vscode-languageserver/node';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument, Statement } from '../gdl/analyzer';
+import type { Token } from '../gdl/lexer';
+import { binaryOperator, endsValue } from './operators';
 
 /** Archicad refuses a source line longer than this, so we must never write one. */
 export const MAX_LINE_LENGTH = 255;
@@ -101,9 +109,16 @@ interface Row {
 	readonly lineStart: number;
 	/** Just past the last character, the line terminator excluded. */
 	readonly lineEnd: number;
-	readonly cells: Field[];
+	cells: Field[];
+	/** A binary operator the row ends on, split out of its last cell. */
+	op?: Field;
 	cont?: Field;
 	comment?: Field;
+	/**
+	 * The row's last token so far, with what stands before it — everything
+	 * `splitTrailingOperator` needs once the row is known to be complete.
+	 */
+	tail?: { tok: Token; prev: Token; prevEnd: number };
 }
 
 /**
@@ -182,6 +197,9 @@ function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefi
 	let depth = 0;
 	let cellStart = -1;
 	let cellEnd = -1;
+	let cellTokens = 0;
+
+	let prevTok: Token | undefined;
 
 	const closeCell = () => {
 		if (row && cellStart >= 0) row.cells.push({ start: cellStart, end: cellEnd });
@@ -209,8 +227,16 @@ function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefi
 			rows.push(row);
 		}
 
-		if (cellStart < 0) cellStart = tok.start;
+		if (cellStart < 0) {
+			cellStart = tok.start;
+			cellTokens = 0;
+		}
+		// Remembered for `splitTrailingOperator`, which needs the token before
+		// the operator to know it is a binary one and not a sign.
+		row.tail = cellTokens > 0 && prevTok ? { tok, prev: prevTok, prevEnd: cellEnd } : undefined;
+		prevTok = tok;
 		cellEnd = tok.end;
+		cellTokens++;
 
 		if (tok.type !== 'operator') continue;
 		if (tok.text === '(' || tok.text === '[') depth++;
@@ -231,6 +257,7 @@ function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefi
 		const indent = text.slice(r.lineStart, r.cells[0].start);
 		if (/[^ \t]/.test(indent)) return undefined;
 		if (!readTail(r, text)) return undefined;
+		splitTrailingOperator(r);
 	}
 	return rows;
 }
@@ -258,6 +285,46 @@ function readTail(row: Row, text: string): boolean {
 	if (text[i] !== '!') return false;
 	row.comment = { start: i, end: row.lineEnd };
 	return true;
+}
+
+/**
+ * Splits a binary operator the row ends on out of its last cell, so it can take
+ * a column of its own against the `\` below it.
+ *
+ *     if  GLOB_MODPAR_NAME = "A"           | \
+ *         GLOB_MODPAR_NAME = "len_shelf"   | \
+ *         GLOB_MODPAR_NAME = "basin_depth"   \
+ *     then
+ *
+ * A wrapped condition has no commas in it, so it is not a table and its cells
+ * are never aligned — the only column it has is the `\`. Left inside the cell,
+ * the operator therefore floats wherever the value below it happens to end, and
+ * the eye loses the one mark that says the condition carries on. Right-aligned
+ * it sits against the continuation instead, and the last row — the one that
+ * ends the expression and so carries no operator — leaves the column empty and
+ * keeps its `\` underneath the rest.
+ *
+ * Three conditions, each of them keeping this to the shape it is for:
+ *
+ *   - **The row must be continued.** Without a `\` there is no right edge to
+ *     align against, and a trailing operator is `operators.ts`'s business
+ *     rather than ours.
+ *   - **The operator must be binary**, which is what the token in front of it
+ *     decides. `-` and `+` are signs as well as operators (see the guide's
+ *     style note, quoted in `operators.ts`), so `put a, \` / `-b` must keep its
+ *     sign on the operand where the author put it.
+ *   - **Something must be left in the cell.** A row that is nothing but an
+ *     operator has no value for it to hang off, and it is a diagnostic anyway.
+ */
+function splitTrailingOperator(row: Row): void {
+	const tail = row.tail;
+	if (!row.cont || !tail) return;
+	const last = row.cells[row.cells.length - 1];
+	if (tail.tok.end !== last.end) return;
+	if (binaryOperator(tail.tok) === undefined || !endsValue(tail.prev)) return;
+
+	row.cells = [...row.cells.slice(0, -1), { start: last.start, end: tail.prevEnd }];
+	row.op = { start: tail.tok.start, end: tail.tok.end };
 }
 
 /**
@@ -430,15 +497,33 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 	// pulling a `\` out to meet another seven rows down aligns it with nothing
 	// a reader can see — that was the `call … parameters \ … returned_parameters \`
 	// shape, where the first marker was dragged out to the width of the second.
+	//
+	// A trailing operator rides on that same run rather than on a run of its
+	// own: it is aligned *against* the continuation edge, so the rows it may
+	// line up with are exactly the rows sharing that edge — including the last
+	// one of the run, which ends the expression and carries no operator at all.
+	const opTarget: (number | undefined)[] = rows.map(() => undefined);
 	const contTarget: (number | undefined)[] = rows.map(() => undefined);
+	/** Where the row's content ends: past its operator, where it has one. */
+	const opEnd = (i: number) => {
+		const op = rows[i].op;
+		if (!op) return lastEnd(i);
+		const written = text.slice(rows[i].cells[rows[i].cells.length - 1].end, op.start);
+		const from = opTarget[i] ?? advance(written, lastEnd(i), opts.tabSize);
+		return advance(text.slice(op.start, op.end), from, opts.tabSize);
+	};
 	for (const run of runsOf(rows, (r) => r.cont !== undefined)) {
-		const target = columnOf(run, lastEnd);
-		for (const i of run) contTarget[i] = target;
+		const withOp = run.filter((i) => rows[i].op);
+		const target = columnOf(withOp, lastEnd);
+		for (const i of withOp) opTarget[i] = target;
+		const contCol = columnOf(run, opEnd);
+		for (const i of run) contTarget[i] = contCol;
 	}
 	const contEnd = (i: number) => {
-		const cont = rows[i].cont;
-		if (!cont) return lastEnd(i);
-		const from = contTarget[i] ?? advance(text.slice(rows[i].cells[rows[i].cells.length - 1].end, cont.start), lastEnd(i), opts.tabSize);
+		const r = rows[i];
+		if (!r.cont) return opEnd(i);
+		const prevEnd = r.op ? r.op.end : r.cells[r.cells.length - 1].end;
+		const from = contTarget[i] ?? advance(text.slice(prevEnd, r.cont.start), opEnd(i), opts.tabSize);
 		return from + 1;
 	};
 	const commentRows = rows.map((_, i) => i).filter((i) => rows[i].comment);
@@ -468,6 +553,13 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 		}
 
 		let prevEnd = r.cells[r.cells.length - 1].end;
+		if (r.op) {
+			gap(prevEnd, r.op.start, opTarget[i]);
+			const opText = text.slice(r.op.start, r.op.end);
+			out += opText;
+			col = advance(opText, col, opts.tabSize);
+			prevEnd = r.op.end;
+		}
 		if (r.cont) {
 			gap(prevEnd, r.cont.start, contTarget[i]);
 			out += '\\';

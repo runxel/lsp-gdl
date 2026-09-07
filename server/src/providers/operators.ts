@@ -105,7 +105,7 @@ const CLAUSE_KEYWORDS = new Set(['then', 'else', 'do', 'to', 'step']);
 const CLOSERS = new Set([')', ']', ',']);
 
 /** Tokens that can be the tail of a value, and so satisfy an operator's left side. */
-function endsValue(tok: Token | undefined): boolean {
+export function endsValue(tok: Token | undefined): boolean {
 	if (!tok) return false;
 	if (tok.type === 'identifier') return !WORD_BINARY.has(tok.lower) && !CLAUSE_KEYWORDS.has(tok.lower);
 	if (tok.type === 'number' || tok.type === 'string') return true;
@@ -116,8 +116,12 @@ function endsValue(tok: Token | undefined): boolean {
  * The operator a token spells, keyed for lookup — raw text for the symbols,
  * lower-cased for the word forms, which are identifiers and case-insensitive
  * like everything else in GDL.
+ *
+ * Shared with `format.ts`, which right-aligns a trailing operator against the
+ * `\` below it and must recognise the word spellings for the same reason this
+ * does: `a or \` wraps exactly as `a | \` does.
  */
-function binaryOperator(tok: Token | undefined): string | undefined {
+export function binaryOperator(tok: Token | undefined): string | undefined {
 	if (!tok) return undefined;
 	if (tok.type === 'operator' && BINARY.has(tok.text)) return tok.text;
 	if (tok.type === 'identifier' && WORD_BINARY.has(tok.lower)) return tok.lower;
