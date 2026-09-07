@@ -53,10 +53,10 @@ test('a continued list is aligned into columns', () => {
 
 test('a list continued by its trailing comma is aligned too', () => {
 	assert.equal(
-		format(['put 1, 1.12345, sr,', '    1.0394*abc, 0, s'].join('\n')),
-		// Column 0 is `put 1,` on one row and `1.0394*abc,` on the other, and
-		// the indent is the author's, so column 1 clears the wider of the two.
-		['put 1,          1.12345, sr,', '    1.0394*abc, 0,       s'].join('\n'),
+		format(['put 1, 1.12345, sr,', '    1, 1.12345, sr,', '    1.0394*abc, 0, s'].join('\n')),
+		// The head is preamble and keeps its own spacing; the two value rows line
+		// up with each other, column 1 clearing the wider of the two.
+		['put 1, 1.12345, sr,', '    1,          1.12345, sr,', '    1.0394*abc, 0,       s'].join('\n'),
 	);
 });
 
@@ -79,8 +79,8 @@ test('padding follows the editor: tabs land on tab stops', () => {
 
 test('a bracketed argument is one cell, not several', () => {
 	assert.equal(
-		format(['put str(a, 1, 0), b,', '    c, dddd'].join('\n')),
-		['put str(a, 1, 0), b,', '    c,            dddd'].join('\n'),
+		format(['put \\', '    str(a, 1, 0), b,', '    c, dddd'].join('\n')),
+		['put \\', '    str(a, 1, 0), b,', '    c,            dddd'].join('\n'),
 	);
 });
 
@@ -107,11 +107,45 @@ test('a head row carrying the command does not have to match the table', () => {
 	);
 });
 
-test('...but a head row that does match still takes part', () => {
+test('...and a head row that happens to match still does not', () => {
+	// Reported by the project owner on `TUBE`, whose head is its node counts and
+	// its mask — three cells, exactly as many as a profile row and by coincidence
+	// alone. They have nothing to do with the profile or the path, so a column
+	// drawn through both means nothing, and the head keeps its own spacing.
+	assert.equal(
+		format(
+			[
+				'tube 2, nsp/4, 1*0+2*0+16+32,',
+				'    ! profile',
+				'    0, 0, 900,',
+				'    0, 300000, 900,',
+				'    ! path',
+				'    0, 0, 0, 0,',
+				'    0, 0, 40000, 900',
+			].join('\n'),
+		),
+		[
+			'tube 2, nsp/4, 1*0+2*0+16+32,',
+			'    ! profile',
+			'    0, 0, 900,',
+			'    0, 300000, 900,',
+			'    ! path',
+			'    0, 0, 0,     0,',
+			'    0, 0, 40000, 900',
+		].join('\n'),
+	);
+	// Same rule on the shape that used to be the head's exemption from the
+	// exemption: two value rows are a table, and `prism_ 3, 0.1,` is not one.
 	assert.equal(
 		format(['prism_ 3, 0.1,', '    1, 2,', '    33333, 4'].join('\n')),
-		['prism_ 3,  0.1,', '    1,     2,', '    33333, 4'].join('\n'),
+		['prism_ 3, 0.1,', '    1,     2,', '    33333, 4'].join('\n'),
 	);
+});
+
+test('a head row and one value row have nothing to line up', () => {
+	// Alignment needs two rows of the table, and the head is never one of them.
+	const text = ['put 1, 1.12345, sr,', '    1.0394*abc, 0, s'].join('\n');
+	assert.equal(format(text), text);
 });
 
 test('a preamble of several rows is exempt, like the head row', () => {
@@ -285,8 +319,17 @@ test('a lone backslash is not dragged out to meet a distant one', () => {
 
 test('trailing comments get a column of their own', () => {
 	assert.equal(
+		format(['put 0, 0, ! head', '    1, 2, ! first', '    3333, 4 ! second'].join('\n')),
+		// The head's cells stay where the author put them, its comment being the
+		// one thing on the row that lines up with the table's — a comment column
+		// is its own kind and never depended on the cells under it.
+		['put 0, 0,    ! head', '    1,    2, ! first', '    3333, 4  ! second'].join('\n'),
+	);
+	// A comment column needs no table under it: these two rows never line up
+	// their cells, the head being preamble, but the comments still do.
+	assert.equal(
 		format(['put 1, 2, ! first', '    3333, 4 ! second'].join('\n')),
-		['put 1,    2, ! first', '    3333, 4  ! second'].join('\n'),
+		['put 1, 2,   ! first', '    3333, 4 ! second'].join('\n'),
 	);
 });
 
@@ -299,8 +342,8 @@ test('a comment inside a continuation is left untouched', () => {
 
 test('trailing whitespace goes from a statement that was aligned', () => {
 	assert.equal(
-		format(['put 1, 2,   ', '    3333, 4  '].join('\n')),
-		['put 1,    2,', '    3333, 4'].join('\n'),
+		format(['put 0, 0,   ', '    1, 2,   ', '    3333, 4  '].join('\n')),
+		['put 0, 0,', '    1,    2,', '    3333, 4'].join('\n'),
 	);
 });
 

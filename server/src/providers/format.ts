@@ -21,7 +21,9 @@
  * Four rules govern it, every one of them written by the corpus:
  *
  *   - **Only a real table is aligned**, and the preamble carrying the command
- *     and its leading arguments is judged apart from the value rows below it.
+ *     and its leading arguments is judged apart from the value rows below it —
+ *     the head row always, whatever its width, since a `TUBE`'s node counts are
+ *     no more a row of its profile for being three cells long.
  *     `tableRows()` below; this is the rule that keeps idiomatic code from being
  *     made worse, and it is worth reading before anything else here.
  *   - **A column of one is left as written.** Alignment needs two rows to line
@@ -390,8 +392,6 @@ interface Gap {
  * rows below line up with each other and the preamble's own spacing is left as
  * the author wrote it, which is also what keeps it from dragging column 1 out to
  * the width of a command — the very thing that spoiled the `VALUES{2}` above.
- * Where the head *does* agree — `put 1, 2, 3,` over more triples — it takes part
- * as before.
  *
  * **The preamble is more than the head row**, which is the second thing the
  * corpus said, reported by the project owner on `UI_INFIELD{3}`:
@@ -409,6 +409,23 @@ interface Gap {
  * `TUBE` whose cross-section rows are triples over a path of quads is the same
  * shape again. So the run is taken from the end.
  *
+ * **The head row is preamble even where its width agrees**, which is the third
+ * thing the corpus said, reported by the project owner on `TUBE`:
+ *
+ *     tube    2,      nsp/4,  1*0+2*0+16+32,
+ *             ! profile
+ *             0,      0,      900,
+ *             ...
+ *
+ * A `TUBE`'s head is its node counts and its mask — three cells, exactly as many
+ * as a profile row, and by coincidence alone: they have nothing to do with the
+ * profile or the path, so a column drawn through both means nothing. That is the
+ * `VALUES{2}` mistake wearing a different hat, and worse for being between two
+ * rows that are not the same kind of thing at all. So the head takes no part on
+ * any statement, `put 1, 2, 3,` over more triples included; the run of value
+ * rows must stand on its own, which also means a statement of a head and one
+ * value row has nothing to line up and is left exactly as written.
+ *
  * The last row is held to the same width as the rest, though it is the one row
  * that could honestly run short, the list having ended. Letting it off brought
  * the `VALUES{2}` stream straight back: its wrapped rows agree by accident and
@@ -421,11 +438,12 @@ interface Gap {
  */
 function tableRows(rows: readonly Row[]): ReadonlySet<number> {
 	const none: ReadonlySet<number> = new Set();
-	const values = rows.map((_, i) => i).filter((i) => rows[i].cells.length > 1);
+	// The head row is never a row of the table, whatever its width: it carries the
+	// command, and what sits next to a command is not a value of the list below it.
+	const values = rows.map((_, i) => i).filter((i) => i > 0 && rows[i].cells.length > 1);
 	if (values.length === 0) return none;
-	// The table is the run of rows the statement ends on, and whatever stands in
-	// front of it at another width is preamble, judged apart. That was always the
-	// head row's exemption; it is simply no longer only the head row's.
+	// The table is then the run of rows the statement ends on, and anything in
+	// front of that run at another width is preamble too, judged the same way.
 	const width = rows[values[values.length - 1]].cells.length;
 	let first = values.length - 1;
 	while (first > 0 && rows[values[first - 1]].cells.length === width) first--;
