@@ -38,6 +38,14 @@
 			</Flags>
 			<Value>2</Value>
 		</Integer>
+		<Length Name="aSegmentWidths">
+			<Description><![CDATA["Segment widths"]]></Description>
+			<ArrayValues FirstDimension="3" SecondDimension="0">
+				<AVal Row="1"><![CDATA[0.4]]></AVal>
+				<AVal Row="2"><![CDATA[0.4]]></AVal>
+				<AVal Row="3"><![CDATA[0.4]]></AVal>
+			</ArrayValues>
+		</Length>
 		<Material Name="matBody">
 			<Description><![CDATA["Body surface"]]></Description>
 			<Value>1</Value>

@@ -8,3 +8,7 @@ if iDetailLevel > 1 then gDetailFactor = 2
 ! Leading underscore marks a name as private to this script by convention:
 ! GDL still shares it, but it is not offered as a completion elsewhere.
 _scratchAngle = 45
+
+! The master runs ahead of every other script, so an array declared here is
+! declared for all of them — which is why the undeclared-array check reads it.
+dim gSegmentLengths[]

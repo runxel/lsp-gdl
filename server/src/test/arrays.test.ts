@@ -9,6 +9,8 @@
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { join } from 'node:path';
+import { URI as Uri } from 'vscode-uri';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyze } from '../gdl/analyzer';
 import { provideArrayDiagnostics } from '../providers/arrays';
@@ -18,6 +20,20 @@ const URI = 'file:///Obj/scripts/3d.gdl';
 function check(text: string): string[] {
 	const td = TextDocument.create(URI, 'gdl-hsf', 1, text);
 	return provideArrayDiagnostics(analyze(URI, text), td).map((d) => d.message);
+}
+
+// The undeclared check needs a real library part on disk: `paramlist.xml` says
+// which names are parameters, and the master script is where a shared `DIM`
+// lives. `TestObject` supplies both — `aSegmentWidths` is an array parameter
+// and `1d.gdl` declares `gSegmentLengths[]`.
+const FIXTURES = join(__dirname, '..', '..', '..', 'TestObject');
+const partUri = (script: string) =>
+	Uri.file(join(FIXTURES, 'TestObject', 'scripts', script)).toString();
+
+function checkInPart(text: string, script = '3d.gdl'): string[] {
+	const uri = partUri(script);
+	const td = TextDocument.create(uri, 'gdl-hsf', 1, text);
+	return provideArrayDiagnostics(analyze(uri, text), td).map((d) => d.message);
 }
 
 test('writing past a fixed dimension is an error', () => {
@@ -83,4 +99,95 @@ test('parameter arrays are left alone', () => {
 	// The guide: library part parameter arrays "are dynamic by default",
 	// whatever size the parameter list currently shows.
 	assert.deepEqual(check('x = ac_corner_offsets[7]'), []);
+});
+
+test('an array that was never declared is reported', () => {
+	// The shape the corpus actually holds: a rename left `pos_drain` behind
+	// while the parameter list moved on to `pos_drain_x` / `pos_drain_y`.
+	assert.deepEqual(checkInPart('circle2 pos_drain[1], pos_drain[2], 0.02'), [
+		'`pos_drain` is subscripted but never declared: no `DIM` reaches this script, ' +
+			'and `TestObject` has no parameter of that name.',
+	]);
+});
+
+test('a missing DIM is reported once, at its first site', () => {
+	// One missing declaration is one mistake, however many times the array is
+	// read — `Öffnung polygonal` reads its undeclared `z` twenty-five times.
+	assert.equal(checkInPart('z[1] = 0\nz[2] = 1\nx = z[1] + z[2]').length, 1);
+	// But two different names are two mistakes.
+	assert.equal(checkInPart('z[1] = 0\nw[1] = 0').length, 2);
+});
+
+test('every declaration in reach silences it', () => {
+	assert.deepEqual(checkInPart('dim mine[4]\nmine[2] = 1'), []);
+	// Declared by the master script, which runs ahead of this one.
+	assert.deepEqual(checkInPart('gSegmentLengths[2] = 1'), []);
+	// An array parameter needs no declaration at all.
+	assert.deepEqual(checkInPart('x = aSegmentWidths[2]'), []);
+	// Nor does a global — plenty of them are arrays.
+	assert.deepEqual(checkInPart('x = RAIL_COMPONENTS[1]'), []);
+});
+
+test('a dictionary member is not an undeclared array', () => {
+	// The guide keeps the two apart: a dictionary "cannot be redeclared as an
+	// array or vice versa", so no `DIM` is ever missing here. Both spellings
+	// occur, because the lexer breaks a dotted path at a subscript.
+	assert.deepEqual(checkInPart('_trapezoid.start.vert[1] = 0'), []);
+	assert.deepEqual(checkInPart('x = pbuf.line[i].edge[j].x'), []);
+});
+
+test('a VALUES range clause is not a subscript', () => {
+	// `RANGE[0, 1]` reads exactly like an array reference. It is a keyword,
+	// which is what keeps it out.
+	assert.deepEqual(checkInPart('values "iDetailLevel" range[0, 3]', 'vl.gdl'), []);
+});
+
+test('outside a library part the check stands down', () => {
+	// Without `paramlist.xml` a parameter cannot be told from a typo, and the
+	// master script cannot be found either — so nothing here is knowable.
+	assert.deepEqual(check('pos_drain[1] = 2'), []);
+});
+
+test('more indices than the array has dimensions is an error', () => {
+	assert.deepEqual(check('dim myarray[]\nmyarray[1][3] = 1'), [
+		'`myarray` is declared with one dimension, so it takes one index, not 2.',
+	]);
+	assert.deepEqual(check('dim a[3][2]\nx = a[1][2][1]'), [
+		'`a` is declared with two dimensions, so it takes two indices, not 3.',
+	]);
+	// It is reported at every site, unlike the missing declaration: each
+	// surplus index is its own typo rather than one absent statement.
+	assert.equal(check('dim a[]\na[1][1] = 1\na[2][2] = 1').length, 2);
+});
+
+test('fewer indices than declared is idiomatic', () => {
+	// The guide allows `var2[i]` and bare `var2` for a two-dimensional array,
+	// meaning one row and the whole table.
+	assert.deepEqual(check('dim a[3][2]\nx = a[1]'), []);
+	assert.deepEqual(check('dim a[3][2]\nput a'), []);
+});
+
+test('a dimension count is only ever taken from a DIM', () => {
+	// A parameter array's dimensions come from the dialog, and the guide warns
+	// a CALL may hand it "an array with arbitrary dimensions" — so
+	// `paramlist.xml` cannot settle how many indices are right.
+	assert.deepEqual(checkInPart('x = aSegmentWidths[1][2]'), []);
+});
+
+test('a parameter that is not an array is reported too', () => {
+	// `paramlist.xml` says which parameters are arrays, and a scalar one
+	// subscripted anyway is the same leftover as a name that does not exist —
+	// `pen_text[i]` in `Maßkettenschablone AOL`, in the same half-finished
+	// UI_INFIELD block that supplies four of the corpus's missing names.
+	assert.deepEqual(checkInPart('bShowFrame[1] = 0'), [
+		'`bShowFrame` is subscripted, but `TestObject` declares it as a plain ' +
+			'Boolean parameter, not an array.',
+	]);
+});
+
+test('a fixed parameter is Archicad\'s, however the part declares it', () => {
+	// `ac_bottomlevel` is a scalar Length in this part's list, but the keyword
+	// table knows it as a fixed parameter — and the vendored list is an AC27
+	// snapshot that will always trail, so those names are never ours to judge.
+	assert.deepEqual(checkInPart('x = ac_bottomlevel[1]'), []);
 });

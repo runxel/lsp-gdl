@@ -1,7 +1,7 @@
 /**
  * Diagnostics for GDL.
  *
- * Seven checks ship in v0, chosen because each catches a mistake that is both
+ * Eight checks ship in v0, chosen because each catches a mistake that is both
  * common and invisible until Archicad refuses to open the object:
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
@@ -15,11 +15,15 @@
  *      object whether or not the jump is ever reached.
  *   7. A GDL keyword claimed as a variable name — `addx = foo + bar`, which
  *      Archicad refuses just as silently.
+ *   8. An array subscripted but never declared, and one given more indices
+ *      than its `DIM` gave it dimensions.
  *
- * Deliberately NOT checked yet: undefined variables. GDL lets Archicad inject
- * names from several directions (fixed parameters, macro `PARAMETERS ALL`,
- * inherited ancestry), so a naive check produces mostly false positives. See
- * CLAUDE.md for what would have to be in place first.
+ * Deliberately NOT checked yet: undefined *scalar* variables. GDL lets Archicad
+ * inject names from several directions (fixed parameters, macro `PARAMETERS
+ * ALL`, inherited ancestry) and reads an unset variable as 0, so a naive check
+ * produces mostly false positives. An array is the tractable half of that
+ * problem, because the guide requires a variable one to be declared outright —
+ * see `arrays.ts`. See CLAUDE.md for what the rest would need.
  */
 
 import { Diagnostic, DiagnosticSeverity, DiagnosticTag } from 'vscode-languageserver/node';
@@ -247,7 +251,7 @@ export function provideDiagnostics(
 		...provideLabelDiagnostics(doc, td, resolve),
 		...provideReservedNameDiagnostics(doc, td),
 		...provideCommaDiagnostics(doc, td),
-		...provideArrayDiagnostics(doc, td),
+		...provideArrayDiagnostics(doc, td, resolve),
 		...provideParameterRefDiagnostics(doc, td),
 		...provideTypeDiagnostics(doc, td),
 		...checkDeprecated(doc, td),

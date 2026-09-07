@@ -36,6 +36,40 @@ export function isPrivateName(name: string): boolean {
 }
 
 /**
+ * The analysed script of `kind` in the library part owning `uri`, or undefined
+ * when the part, the script or its text cannot be read.
+ */
+function siblingScript(
+	uri: string,
+	kind: ScriptKind,
+	resolve: TextResolver,
+): GdlDocument | undefined {
+	const libpart = libPartFor(uri);
+	if (!libpart) return undefined;
+
+	const sibling = libPartScripts(libpart.root).find((s) => s.kind === kind);
+	if (!sibling || sibling.uri === uri) return undefined;
+
+	// Prefer unsaved editor content; fall back to what is on disk, since a
+	// sibling script is usually not the file being edited.
+	let text = resolve(sibling.uri);
+	if (text === undefined) {
+		try {
+			text = readFileSync(URI.parse(sibling.uri).fsPath, 'utf8');
+		} catch {
+			return undefined;
+		}
+	}
+
+	const cached = cache.get(sibling.uri);
+	if (cached && cached.text === text) return cached.doc;
+
+	const doc = analyze(sibling.uri, text);
+	cache.set(sibling.uri, { text, doc });
+	return doc;
+}
+
+/**
  * The analysed master script of the library part owning `uri`.
  *
  * Returns undefined for the master script itself — its variables are already
@@ -47,30 +81,30 @@ export function masterScriptFor(
 	resolve: TextResolver,
 ): GdlDocument | undefined {
 	if (script === '1d') return undefined;
+	return siblingScript(uri, '1d', resolve);
+}
 
-	const libpart = libPartFor(uri);
-	if (!libpart) return undefined;
-
-	const master = libPartScripts(libpart.root).find((s) => s.kind === '1d');
-	if (!master) return undefined;
-
-	// Prefer unsaved editor content; fall back to what is on disk, since the
-	// master script is usually not the file being edited.
-	let text = resolve(master.uri);
-	if (text === undefined) {
-		try {
-			text = readFileSync(URI.parse(master.uri).fsPath, 'utf8');
-		} catch {
-			return undefined;
-		}
+/**
+ * The scripts whose names reach `uri`, itself excluded.
+ *
+ * Two of the eight run across the whole library part rather than on their own:
+ * the master script (`1d.gdl`), which runs ahead of every other, and the
+ * parameter script (`vl.gdl`). That is the same scope a rename of a variable
+ * defined in either of them uses — see "Scope, and what rename must respect"
+ * in CLAUDE.md — and it is deliberately the *generous* reading: whatever a
+ * check does with these, being able to see one declaration too many can only
+ * quieten it, never make it report something it should not.
+ */
+export function sharedScriptsFor(
+	uri: string,
+	resolve: TextResolver,
+): GdlDocument[] {
+	const docs: GdlDocument[] = [];
+	for (const kind of ['1d', 'vl'] as const) {
+		const doc = siblingScript(uri, kind, resolve);
+		if (doc) docs.push(doc);
 	}
-
-	const cached = cache.get(master.uri);
-	if (cached && cached.text === text) return cached.doc;
-
-	const doc = analyze(master.uri, text);
-	cache.set(master.uri, { text, doc });
-	return doc;
+	return docs;
 }
 
 /**

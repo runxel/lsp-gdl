@@ -122,3 +122,10 @@ abc = atn(_stich / ccenters.c[1].x
 
 ! 14. a GDL keyword claimed as a variable name
 addx = A + B
+
+! 15. Arrays
+gSegmentLengths[1] = 1 		! all good
+gSegmentLengths[2][1] = 1 	! wrong dimension
+dim newarr[1]
+newarr[2] = 1				! out of bounds
+iDetailLevel[1] = 1			! wrong type: Integer parameter, but array access suggests multiple values

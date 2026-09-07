@@ -26,12 +26,33 @@
  * Library part parameters that are arrays are deliberately *not* checked: the
  * guide states they "are dynamic by default", whatever size the parameter list
  * happens to show today.
+ *
+ * Two further checks read the same declarations from the other end.
+ *
+ * **An array referenced but never declared.** The guide is explicit about the
+ * asymmetry between a parameter and a variable (§ DIM): *"Parameter arrays do
+ * not have to be declared in the script and they are dynamic by default"*,
+ * while *"the elements of the arrays can be referenced anywhere in the script
+ * but if they are variables, only after the declaration."* So a subscripted
+ * name that is neither a parameter, nor a global, nor `DIM`med anywhere in
+ * reach is a leftover — nearly always a rename that missed a site, or a
+ * parameter deleted from `paramlist.xml` while the script kept using it.
+ *
+ * **Too many indices.** `DIM` fixes how many dimensions an array has, and GDL
+ * has only one and two dimensional arrays. `DIM a[]` followed by `a[1][3]`
+ * subscripts a row that was never declared. Fewer indices than declared is
+ * fine and idiomatic — the guide allows `var2[i]` and bare `var2` for a
+ * two-dimensional `var2`, meaning a row and the whole array — so only the
+ * excess is reported.
  */
 
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument } from '../gdl/analyzer';
 import type { Token } from '../gdl/lexer';
+import { lookupWithVariants } from '../gdl/keywords';
+import { libPartFor } from '../gdl/libpart';
+import { sharedScriptsFor, type TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
 
@@ -113,13 +134,60 @@ function parseDim(tokens: readonly Token[]): ArrayDecl[] {
 	return decls;
 }
 
-export function provideArrayDiagnostics(doc: GdlDocument, td: TextDocument): Diagnostic[] {
+/** Every array `DIM`med by a script, keyed on the lower-cased name. */
+function declaredArrays(doc: GdlDocument): Map<string, ArrayDecl> {
+	const arrays = new Map<string, ArrayDecl>();
+	for (const stmt of doc.statements) {
+		if (stmt.head !== 'dim') continue;
+		for (const decl of parseDim(stmt.tokens)) arrays.set(decl.name.toLowerCase(), decl);
+	}
+	return arrays;
+}
+
+/** "one", "two" — the guide has no other array shape to name. */
+function dimensionWord(n: number): string {
+	return n === 1 ? 'one' : n === 2 ? 'two' : String(n);
+}
+
+export function provideArrayDiagnostics(
+	doc: GdlDocument,
+	td: TextDocument,
+	// Supplies unsaved editor text for the scripts that run ahead of this one;
+	// defaulted so callers with nothing open fall back to what is on disk.
+	resolve: TextResolver = () => undefined,
+): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 	const arrays = new Map<string, ArrayDecl>();
 
-	const report = (tok: Token, length: number, message: string) => {
+	// Declarations arriving from elsewhere in the library part, plus the
+	// parameter list. Outside an HSF folder neither can be read, and the
+	// undeclared check stands down rather than guess — the same call
+	// `labels.ts` makes about a master script it cannot find.
+	const libpart = libPartFor(doc.uri);
+	const inherited = new Map<string, ArrayDecl>();
+	if (libpart) {
+		for (const other of sharedScriptsFor(doc.uri, resolve)) {
+			for (const [key, decl] of declaredArrays(other)) {
+				if (!inherited.has(key)) inherited.set(key, decl);
+			}
+		}
+	}
+
+	// A missing `DIM` is one mistake however many times the array is read, and
+	// the corpus writes some of them twenty-five times in a file. So the name
+	// is reported once, at its first site — which is also where the missing
+	// declaration belongs. A surplus index is the opposite: each one is its own
+	// typo, so every one of those is reported.
+	const alreadyReported = new Set<string>();
+
+	const report = (
+		tok: Token,
+		length: number,
+		message: string,
+		severity: DiagnosticSeverity = DiagnosticSeverity.Error,
+	) => {
 		diagnostics.push({
-			severity: DiagnosticSeverity.Error,
+			severity,
 			range: { start: td.positionAt(tok.start), end: td.positionAt(tok.start + length) },
 			message,
 			source: SOURCE,
@@ -139,13 +207,42 @@ export function provideArrayDiagnostics(doc: GdlDocument, td: TextDocument): Dia
 			const tok = toks[i];
 			if (tok.type !== 'identifier' || !isOp(toks[i + 1], '[')) continue;
 
-			const decl = arrays.get(tok.lower);
+			// A dictionary member is not an array variable and is never `DIM`med
+			// — the guide keeps the two apart outright ("Dictionary type variables
+			// cannot be redeclared as arrays or vice versa"). It reaches us two
+			// ways, because the lexer breaks a dotted path at a subscript:
+			// `_trapezoid.start.vert[1]` arrives as one identifier holding dots,
+			// while the `edge` of `pbuf.line[i].edge[j]` arrives on its own with
+			// the `.` in front of it. 3392 corpus sites of the first shape and
+			// 1416 of the second, none of them an array declaration's business.
+			const dotted = tok.lower.includes('.') || isOp(toks[i - 1], '.');
+
+			// A member is nobody's declaration, so it gets no bounds either — an
+			// `edge` of a dictionary must not be measured against a `DIM edge[4]`
+			// that happens to be in the same script.
+			const decl = dotted ? undefined : (arrays.get(tok.lower) ?? inherited.get(tok.lower));
 			let at = i + 1;
 
 			for (let axis = 0; isOp(toks[at], '['); axis++) {
 				const end = closeBracket(toks, at);
 				const index = constantIndex(toks, at + 1, end - 1);
 				const indexTok = toks[at + 1];
+
+				// One index too many. Only a `DIM` in reach says how many an array
+				// takes: a parameter array's are set in the dialog, and the guide
+				// warns that a `CALL` may hand it "an array with arbitrary
+				// dimensions" anyway, so `paramlist.xml` cannot settle this.
+				if (decl && axis >= decl.dims.length) {
+					report(
+						toks[at],
+						toks[end - 1].end - toks[at].start,
+						`\`${decl.name}\` is declared with ${dimensionWord(decl.dims.length)} ` +
+							`dimension${decl.dims.length === 1 ? '' : 's'}, so it takes ` +
+							`${dimensionWord(decl.dims.length)} ${decl.dims.length === 1 ? 'index' : 'indices'}, not ${axis + 1}.`,
+					);
+					at = end;
+					continue;
+				}
 
 				if (index !== null && indexTok) {
 					const span = toks[end - 2].end - indexTok.start;
@@ -174,6 +271,46 @@ export function provideArrayDiagnostics(doc: GdlDocument, td: TextDocument): Dia
 
 				at = end;
 			}
+
+			// A parameter needs no `DIM` — but only an *array* parameter does.
+			// `paramlist.xml` says which: an array carries `<ArrayValues>` and
+			// a scalar does not, and that is a categorical fact about the
+			// declaration rather than a size, so it is safe to read where the
+			// dimension counts are not. A scalar subscripted anyway is the same
+			// leftover as a name that does not exist at all.
+			const param = libpart?.parameters.get(tok.lower);
+
+			if (
+				!decl &&
+				libpart &&
+				!dotted &&
+				!alreadyReported.has(tok.lower) &&
+				!param?.dimensions &&
+				// A good few globals are arrays — `RAIL_COMPONENTS`,
+				// `STAIR2D_BREAKMARK_GEOM`, 1388 corpus sites in 89 files — and
+				// none of them is ever declared. The table also catches `RANGE[0,
+				// 1]`, a `VALUES` sub-clause that is no subscript at all, and the
+				// `ac_`/`ifc_` fixed parameters the vendored list knows about but
+				// this part's own list may not — Archicad owns those names, so
+				// they are never ours to judge.
+				!lookupWithVariants(tok.text)
+			) {
+				alreadyReported.add(tok.lower);
+				report(
+					tok,
+					tok.end - tok.start,
+					param
+						? `\`${tok.text}\` is subscripted, but \`${libpart.name}\` declares it as a ` +
+								`plain ${param.typeLabel} parameter, not an array.`
+						: `\`${tok.text}\` is subscripted but never declared: no \`DIM\` reaches ` +
+								`this script, and \`${libpart.name}\` has no parameter of that name.`,
+					// A warning rather than an error: the declaration could still be
+					// arriving by a route this server cannot see, and a wrong hard
+					// error on working code is worse than a soft one on a leftover.
+					DiagnosticSeverity.Warning,
+				);
+			}
+
 			i = at - 1;
 		}
 	}
