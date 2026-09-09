@@ -31,6 +31,10 @@
 			<Description><![CDATA["Show frame"]]></Description>
 			<Value>1</Value>
 		</Boolean>
+		<Integer Name="iMarkerDir">
+			<Description><![CDATA["Marker direction"]]></Description>
+			<Value>1</Value>
+		</Integer>
 		<Integer Name="iDetailLevel">
 			<Description><![CDATA["Detail level"]]></Description>
 			<Flags>

@@ -1,7 +1,7 @@
 /**
  * Diagnostics for GDL.
  *
- * Eight checks ship in v0, chosen because each catches a mistake that is both
+ * Nine checks ship in v0, chosen because each catches a mistake that is both
  * common and invisible until Archicad refuses to open the object:
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
@@ -17,6 +17,8 @@
  *      Archicad refuses just as silently.
  *   8. An array subscripted but never declared, and one given more indices
  *      than its `DIM` gave it dimensions.
+ *   9. A variable written and never read, which is not an error at all — it
+ *      is greyed out rather than listed, being the leftover of an edit.
  *
  * Deliberately NOT checked yet: undefined *scalar* variables. GDL lets Archicad
  * inject names from several directions (fixed parameters, macro `PARAMETERS
@@ -40,6 +42,7 @@ import { provideOperatorDiagnostics } from './operators';
 import { provideParenDiagnostics } from './parens';
 import { provideLabelDiagnostics } from './labels';
 import { provideReservedNameDiagnostics } from './reservedNames';
+import { provideUnusedDiagnostics } from './unused';
 import type { TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
@@ -254,6 +257,7 @@ export function provideDiagnostics(
 		...provideArrayDiagnostics(doc, td, resolve),
 		...provideParameterRefDiagnostics(doc, td),
 		...provideTypeDiagnostics(doc, td),
+		...provideUnusedDiagnostics(doc, td, resolve),
 		...checkDeprecated(doc, td),
 	].slice(0, maxProblems);
 }

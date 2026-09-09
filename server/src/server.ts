@@ -12,6 +12,7 @@ import {
 	InitializeParams,
 	DidChangeConfigurationNotification,
 	CompletionItem,
+	CompletionTriggerKind,
 	TextDocumentSyncKind,
 	InitializeResult,
 	DocumentDiagnosticReportKind,
@@ -101,8 +102,24 @@ connection.onInitialize((params: InitializeParams) => {
 			completionProvider: {
 				resolveProvider: true,
 				// `_` and `.` are ordinary identifier characters in GDL, so they
-				// must not re-trigger completion.
-				triggerCharacters: [],
+				// must not re-trigger completion. The comparison operators do,
+				// because what may legally follow one is often a short, knowable
+				// list — see `gdl/valueLists.ts`. `>` is here for the `<>` it
+				// closes; on its own it is an ordering test, which answers with
+				// nothing rather than with a list the guide advises against.
+				//
+				// **The space is one of them**, and it is not optional: almost
+				// nobody writes `iMarkerDir =DIRVALUES_PERPEND`. A space ends the
+				// word VS Code is filtering on, so the list opened by the `=`
+				// closes again the moment the author types the space they were
+				// always going to type, and the feature looks broken. Triggering
+				// on the space reopens it. Signature help already takes a space
+				// for the same reason — a GDL command has no bracket to open on.
+				//
+				// It fires on every space in the file, which costs a walk back
+				// over a handful of tokens and an empty answer; only a value
+				// position returns anything at all.
+				triggerCharacters: ['=', '#', '>', ' '],
 			},
 			hoverProvider: true,
 			definitionProvider: true,
@@ -191,7 +208,12 @@ connection.languages.diagnostics.on(async (params) => {
 connection.onCompletion((params): CompletionItem[] => {
 	const textDocument = documents.get(params.textDocument.uri);
 	if (!textDocument) return [];
-	return provideCompletion(getAnalysis(textDocument), resolveText);
+	return provideCompletion(getAnalysis(textDocument), resolveText, {
+		offset: textDocument.offsetAt(params.position),
+		// Typing an operator means a value is being written; being asked
+		// outright does not, so the ordinary list still follows.
+		triggered: params.context?.triggerKind === CompletionTriggerKind.TriggerCharacter,
+	});
 });
 
 connection.onCompletionResolve((item): CompletionItem => {

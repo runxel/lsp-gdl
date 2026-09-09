@@ -43,6 +43,38 @@ function isClauseStarter(tok: Token | undefined): boolean {
 }
 
 /**
+ * The index of the `=` that closes an assignment whose target starts at `i`, or
+ * undefined when what stands there is not an assignment opening its clause.
+ *
+ * The target may be a whole path — `gr_out[TYPE_MEDIA_O2]`, `_drods.f[1].gr` —
+ * so subscripts and dict members are stepped over alike; and the `=` must come
+ * straight after that path, since `=` is GDL's equality operator too and
+ * `IF gr_toplace = "x" THEN` asks a question rather than naming anything.
+ *
+ * Shared with `literals.ts`, which reads the same shape for a different reason:
+ * there is one account here of what an assignment looks like, not two.
+ */
+export function assignmentOperatorAt(toks: readonly Token[], i: number): number | undefined {
+	const before = toks[i - 1];
+	if (before && !isClauseStarter(before)) return undefined;
+
+	// Step over the rest of the target: subscripts and dict members alike.
+	let j = i + 1;
+	let depth = 0;
+	while (j < toks.length) {
+		const tok = toks[j];
+		if (isOperator(tok, '[')) depth++;
+		else if (isOperator(tok, ']')) depth--;
+		else if (depth === 0 && !isOperator(tok, '.') && !isOperator(toks[j - 1], '.')) break;
+		if (depth < 0) break;
+		j++;
+	}
+	if (depth !== 0) return undefined;
+
+	return isOperator(toks[j], '=') ? j : undefined;
+}
+
+/**
  * Reports every `<target> = "literal"` in one statement whose target's head is
  * a name the caller tracks — a variable the script elsewhere places as a group,
  * or jumps to as a label.
@@ -60,23 +92,9 @@ export function forEachLiteralAssignment(
 		const head = toks[i];
 		if (head.type !== 'identifier' || !isTracked(head.lower)) continue;
 
-		const before = toks[i - 1];
-		if (before && !isClauseStarter(before)) continue;
+		const j = assignmentOperatorAt(toks, i);
+		if (j === undefined) continue;
 
-		// Step over the rest of the target: subscripts and dict members alike.
-		let j = i + 1;
-		let depth = 0;
-		while (j < toks.length) {
-			const tok = toks[j];
-			if (isOperator(tok, '[')) depth++;
-			else if (isOperator(tok, ']')) depth--;
-			else if (depth === 0 && !isOperator(tok, '.') && !isOperator(toks[j - 1], '.')) break;
-			if (depth < 0) break;
-			j++;
-		}
-		if (depth !== 0) continue;
-
-		if (!isOperator(toks[j], '=')) continue;
 		const value = toks[j + 1];
 		if (value?.type !== 'string' || value.unterminated) continue;
 

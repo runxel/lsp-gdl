@@ -13,6 +13,24 @@
  *
  * Filtering keywords by script kind is the point: offering `CUTPLANE` inside a
  * parameter script is noise, and no TextMate grammar can avoid it.
+ *
+ * ## Values, which outrank all five
+ *
+ * One position knows far more than any of that. After `IF GLOB_VIEW_TYPE =` the
+ * answer is not "every name in scope" but one of eight numbers, and the editor
+ * can say which — see `gdl/valueLists.ts` for where the eight come from.
+ *
+ * So a value position is answered with values, and the two ways of arriving
+ * there are treated differently:
+ *
+ *   - **Typing the operator** (`=`, `#`, the `>` closing a `<>`) returns the
+ *     values *and nothing else*, or an empty list where none are known. A
+ *     trigger character that popped the whole keyword table after every
+ *     assignment in the file would be a nuisance, and turning the feature off
+ *     is not the answer — saying nothing is.
+ *   - **Asking for completions** — Ctrl+Space, or typing into the value — puts
+ *     the values at the head of the ordinary list, where a name may still be
+ *     what is wanted: `iMarkerDir = iDefaultDir` is perfectly good GDL.
  */
 
 import {
@@ -22,6 +40,7 @@ import {
 	MarkupKind,
 } from 'vscode-languageserver/node';
 import type { GdlDocument } from '../gdl/analyzer';
+import { valueNameAt, valuesFor, type EnumValue, type ValueSet } from '../gdl/valueLists';
 import { keywordsFor, validScripts, type GdlKeyword } from '../gdl/keywords';
 import { referenceDoc } from '../gdl/referenceDocs';
 import { libPartFor } from '../gdl/libpart';
@@ -30,6 +49,8 @@ import { SCRIPT_LABELS } from '../gdl/scriptKind';
 
 /** Sort keys — lower sorts first in VS Code's completion list. */
 const SORT = {
+	/** A legal value of the name being compared: nothing beats knowing the answer. */
+	value: '0',
 	parameter: '1',
 	variable: '2',
 	master: '3',
@@ -58,8 +79,68 @@ function completionKind(kw: GdlKeyword): CompletionItemKind {
 	}
 }
 
-export function provideCompletion(doc: GdlDocument, resolve: TextResolver = () => undefined): CompletionItem[] {
-	const items: CompletionItem[] = [];
+/** Where completions were asked for, and how. */
+export interface CompletionSite {
+	/** Cursor offset in the document. */
+	readonly offset: number;
+	/** True when the editor triggered on an operator rather than being asked. */
+	readonly triggered: boolean;
+}
+
+/**
+ * One legal value, as an item.
+ *
+ * The meaning goes in `detail`, which VS Code prints beside the label in the
+ * list itself — that is the whole feature, and burying it in `documentation`
+ * would mean pressing a key to see the thing you came for. The number behind a
+ * named constant goes below it: it is not what should be written, but it is
+ * what the author of the old code wrote, and it answers the next question.
+ */
+function valueItem(value: EnumValue, set: ValueSet, name: string, index: number): CompletionItem {
+	const notes: string[] = [];
+	if (value.meaning) notes.push(`**${value.meaning}**`);
+	if (value.numeric !== undefined && String(value.numeric) !== value.insert) {
+		notes.push(`\`${name}\` = \`${value.numeric}\``);
+	}
+	notes.push(
+		set.source === 'guide'
+			? '_Documented value, from the GDL reference guide._'
+			: '_Allowed by this library part\u2019s parameter script._',
+	);
+
+	return {
+		label: value.insert,
+		kind: CompletionItemKind.EnumMember,
+		...(value.meaning ? { detail: value.meaning } : {}),
+		documentation: { kind: MarkupKind.Markdown, value: notes.join('\n\n') },
+		// Padded so the author's own order survives: a value list is written in
+		// the order it makes sense to read, not alphabetically.
+		sortText: SORT.value + String(index).padStart(3, '0'),
+	};
+}
+
+/** The values legal at `site`, if it is a value position with a known answer. */
+function valueItems(doc: GdlDocument, resolve: TextResolver, site: CompletionSite | undefined): CompletionItem[] {
+	if (!site) return [];
+	const name = valueNameAt(doc, site.offset);
+	if (!name) return [];
+
+	const set = valuesFor(name, doc, resolve);
+	if (!set) return [];
+	return set.values.map((value, i) => valueItem(value, set, name, i));
+}
+
+export function provideCompletion(
+	doc: GdlDocument,
+	resolve: TextResolver = () => undefined,
+	site?: CompletionSite,
+): CompletionItem[] {
+	const items: CompletionItem[] = valueItems(doc, resolve, site);
+
+	// The operator was just typed, so the author is writing a value and nothing
+	// else: answer with what is legal there, or say nothing at all.
+	if (site?.triggered) return items;
+
 	const seen = new Set<string>();
 
 	// 1. Library part parameters — the highest-signal completions there are.

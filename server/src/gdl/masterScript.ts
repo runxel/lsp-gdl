@@ -108,6 +108,29 @@ export function sharedScriptsFor(
 }
 
 /**
+ * Every other script of the library part owning `uri`.
+ *
+ * `sharedScriptsFor` above answers "which scripts reach me"; this answers the
+ * mirror, "which scripts do I reach", which is the question a variable of the
+ * master or parameter script raises — either publishes to the whole part, so
+ * anything asking whether such a variable is live has to read all of them.
+ *
+ * Returns nothing outside a library part, where the siblings cannot be found.
+ */
+export function siblingScripts(uri: string, resolve: TextResolver): GdlDocument[] {
+	const libpart = libPartFor(uri);
+	if (!libpart) return [];
+
+	const docs: GdlDocument[] = [];
+	for (const script of libPartScripts(libpart.root)) {
+		if (script.uri === uri) continue;
+		const doc = siblingScript(uri, script.kind, resolve);
+		if (doc) docs.push(doc);
+	}
+	return docs;
+}
+
+/**
  * The master script's shared variables, for a document in the same library
  * part — the ones worth offering as completions everywhere. Script-private
  * names are left out; see the note at the top of this file.

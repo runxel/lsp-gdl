@@ -79,7 +79,9 @@ test('a trailing ELSE opens a block that ENDIF closes', () => {
 	//     ENDIF
 	// ENDIF
 	assert.deepEqual(
-		messages('if a then x = 1 else\n\tif b then y = 2 else\n\t\tz = 3\n\tendif\nendif'),
+		// The trailing `addx` is not decoration: without a reader, `unused.ts`
+		// greys all three, and this case is about block balance.
+		messages('if a then x = 1 else\n\tif b then y = 2 else\n\t\tz = 3\n\tendif\nendif\naddx x + y + z'),
 		[],
 	);
 });

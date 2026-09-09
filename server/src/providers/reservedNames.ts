@@ -81,104 +81,21 @@
 
 import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
-import type { GdlDocument, Statement } from '../gdl/analyzer';
-import type { Token } from '../gdl/lexer';
+import type { GdlDocument } from '../gdl/analyzer';
 import { keywordKindLabel, reservedForVariables } from '../gdl/keywords';
+// `=` is both of GDL's operators, and telling a claim from a comparison is the
+// same walk `gdl/usage.ts` needs to tell a write from a read — so the walk is
+// shared rather than written twice. The measurements that shaped it are in this
+// file's header, since this check is what they were taken for.
+import { claimedNames } from '../gdl/assignments';
 
 export const SOURCE = 'gdl';
-
-/**
- * The identifier assigned to at `i`, or undefined when nothing is.
- *
- * The target may carry subscripts and dict members in any order — `gr_out[i]`,
- * `_drods.f[1].gr` — and it is an assignment only when the `=` comes straight
- * after that path. Anything else is a comparison: `=` is both operators in GDL,
- * so `IF pen = 3 THEN` must not read as a claim on `PEN`.
- */
-function assignedName(toks: readonly Token[], i: number): Token | undefined {
-	const head = toks[i];
-	if (head?.type !== 'identifier') return undefined;
-
-	let j = i + 1;
-	for (;;) {
-		const tok = toks[j];
-		if (tok?.type !== 'operator') break;
-		if (tok.text === '[') {
-			// Skip the whole subscript; it may itself be an indexed expression.
-			let depth = 0;
-			for (; j < toks.length; j++) {
-				const inner = toks[j];
-				if (inner.type !== 'operator') continue;
-				if (inner.text === '[' || inner.text === '(') depth++;
-				else if (inner.text === ']' || inner.text === ')') {
-					depth--;
-					if (depth === 0) {
-						j++;
-						break;
-					}
-				}
-			}
-			if (depth !== 0) return undefined; // unbalanced — `parens.ts` reports it
-			continue;
-		}
-		// A `.` only ever follows a subscript here; `pt.start` is one token.
-		if (tok.text === '.' && toks[j + 1]?.type === 'identifier') {
-			j += 2;
-			continue;
-		}
-		break;
-	}
-
-	const eq = toks[j];
-	return eq?.type === 'operator' && eq.text === '=' ? head : undefined;
-}
-
-/** Where each clause of the statement begins: the head, and after every THEN/ELSE. */
-function clauseStarts(toks: readonly Token[]): number[] {
-	const starts = [0];
-	for (let i = 0; i < toks.length; i++) {
-		const tok = toks[i];
-		if (tok.type !== 'identifier') continue;
-		if (tok.lower === 'then' || tok.lower === 'else') starts.push(i + 1);
-	}
-	return starts;
-}
-
-/** Every name this statement claims for a variable. */
-function claimedNames(stmt: Statement): Token[] {
-	// `PARAMETERS x = 1` addresses a parameter list, not a variable — this
-	// part's own, or after `CALL` the macro's. Neither is ours to judge.
-	if (stmt.head === 'parameters') return [];
-
-	const toks = stmt.tokens;
-	const claimed: Token[] = [];
-
-	for (const start of clauseStarts(toks)) {
-		const assigned = assignedName(toks, start);
-		if (assigned) {
-			claimed.push(assigned);
-			continue;
-		}
-		const word = toks[start];
-		if (word?.type !== 'identifier') continue;
-		// `FOR i = 1 TO n` defines the loop variable; `LET x = 1` is the legacy
-		// spelling of the assignment above.
-		if (word.lower === 'for' && toks[start + 1]?.type === 'identifier') {
-			claimed.push(toks[start + 1]);
-		} else if (word.lower === 'let') {
-			const target = assignedName(toks, start + 1);
-			if (target) claimed.push(target);
-		}
-	}
-
-	return claimed;
-}
 
 export function provideReservedNameDiagnostics(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 
 	for (const stmt of doc.statements) {
-		for (const tok of claimedNames(stmt)) {
+		for (const { token: tok } of claimedNames(stmt)) {
 			const kw = reservedForVariables(tok.text);
 			if (!kw) continue;
 

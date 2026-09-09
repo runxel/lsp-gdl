@@ -4,6 +4,13 @@
 
 values "iDetailLevel", 1, 2, 3
 
+! Each value carries its own caption, so completion can say what it means
+! rather than only that it is legal. The names come from 1d.gdl.
+values{2} "iMarkerDir"	DIR_PERPENDICULAR,	stMarkerDir[DIR_PERPENDICULAR],
+						DIR_ALIGNED,		stMarkerDir[DIR_ALIGNED],
+						DIR_HORIZONTAL,		stMarkerDir[DIR_HORIZONTAL],
+						DIR_VERTICAL,		stMarkerDir[DIR_VERTICAL]
+
 values "iDetailLevel", 	range[1, 10)
 
 

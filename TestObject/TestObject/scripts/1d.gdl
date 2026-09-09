@@ -12,3 +12,18 @@ _scratchAngle = 45
 ! The master runs ahead of every other script, so an array declared here is
 ! declared for all of them — which is why the undeclared-array check reads it.
 dim gSegmentLengths[]
+
+! GDL has no enum, so a named value and its caption are written as two ordinary
+! assignments — the shape `gdl/literals.ts` reads back. Type `iMarkerDir = ` in
+! any script of this part and the four names below are offered, each with the
+! caption resolved from `stMarkerDir`.
+DIR_PERPENDICULAR	= 1
+DIR_ALIGNED			= 2
+DIR_HORIZONTAL		= 3
+DIR_VERTICAL		= 4
+
+dim stMarkerDir[4]
+stMarkerDir[DIR_PERPENDICULAR]	= "Perpendicular to the marker axis"
+stMarkerDir[DIR_ALIGNED]		= "Aligned with the marker axis"
+stMarkerDir[DIR_HORIZONTAL]		= "Horizontal"
+stMarkerDir[DIR_VERTICAL]		= "Vertical"
