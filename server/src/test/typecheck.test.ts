@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
+import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
 import { analyze } from '../gdl/analyzer';
@@ -110,8 +111,38 @@ test('DIM resets an array, so it may be refilled with another type', () => {
 	assert.deepEqual(check('dim arr[]\narr[1] = "a"\ndim arr[]\narr[1] = 1'), []);
 });
 
-test('mixing types within one array fill is flagged', () => {
-	assert.match(check('dim arr[]\narr[1] = 1\narr[2] = "a"')[0], /mixes types/);
+test('int and float mix freely in a standalone array', () => {
+	// Archicad enforces nothing about a standalone array's element types, so
+	// the two numeric types are one kind here.
+	assert.deepEqual(check('dim arr[]\narr[1] = 1\narr[2] = 2.5'), []);
+	assert.deepEqual(check('dim arr[]\narr[1] = 2.5\narr[2] = 1'), []);
+});
+
+test('a number meeting a string in an array warns, and only warns', () => {
+	const text = 'dim arr[]\narr[1] = 1\narr[2] = "a"';
+	assert.match(check(text)[0], /holds Numeric values — assigning a String mixes types/);
+	const td = TextDocument.create(BARE, 'gdl-hsf', 1, text);
+	assert.deepEqual(
+		provideTypeDiagnostics(analyze(BARE, text), td).map((d) => d.severity),
+		[DiagnosticSeverity.Warning],
+	);
+});
+
+test('a mixed array has no element type, so reads of it assert nothing', () => {
+	// `beamProfile_m_AOL` tabulates coordinates beside integer status codes and
+	// reads `poly[j + 3]` back as a status. Calling the element type real on the
+	// strength of the coordinates cost five bogus float-comparison warnings in
+	// one loop, and calling it integer would miss real ones elsewhere.
+	assert.deepEqual(
+		check('dim poly[]\npoly[1] = 0.5\npoly[2] = 3\nst = poly[3]\nif st = 600 then addx 1'),
+		[],
+	);
+});
+
+test('an array that switches kind is mentioned once, not on every write after', () => {
+	// The slot is re-seated, or a deliberate refill floods the file with the
+	// same warning against the type it started out holding.
+	assert.equal(check('dim arr[]\narr[1] = "a"\narr[2] = 1\narr[3] = 2').length, 1);
 });
 
 // --- dictionaries -----------------------------------------------------------

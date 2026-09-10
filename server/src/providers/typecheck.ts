@@ -20,6 +20,11 @@
  *      Integer parameter (or a string to a numeric one) breaks it.
  *   4. **Swapping a variable between string and numeric** is legal but almost
  *      always a mistake.
+ *   5. **A standalone array is not typed at all.** Whatever the guide's wording
+ *      about arrays suggests, Archicad enforces nothing here — confirmed by the
+ *      project owner against the application. So int and real are one kind in
+ *      an array, and a number meeting a string is a `Warning` about code smell,
+ *      never an error. The strictness in rule 1 belongs to dictionaries alone.
  *
  * Everything here stays silent when either side of an assignment is `unknown`.
  * Globals, macro results and unresolved calls are all unknown, and a checker
@@ -34,6 +39,8 @@ import { libPartFor } from '../gdl/libpart';
 import {
 	functionReturnType,
 	isKindMismatch,
+	kindLabel,
+	kindOf,
 	numberLiteralType,
 	parameterType,
 	typeLabel,
@@ -49,6 +56,12 @@ interface Slot {
 	/** For arrays this is the *element* type. */
 	type: GdlType;
 	container: Container;
+	/**
+	 * Set once a standalone array has been written with more than one type,
+	 * after which it has no element type worth asserting — see the `array`
+	 * case in `checkAssignment`.
+	 */
+	mixed?: boolean;
 	/** Declared type, when the name is a library part parameter. */
 	declared?: GdlType;
 	parameterName?: string;
@@ -515,6 +528,10 @@ export function provideTypeDiagnostics(doc: GdlDocument, td: TextDocument): Diag
 			return;
 		}
 
+		// A standalone array already known to hold a mixture has nothing left to
+		// learn and nothing further to say; the one warning was made below.
+		if (existing?.mixed) return;
+
 		if (known === 'unknown') {
 			// First sighting: this assignment defines the type.
 			env.set(target.key, {
@@ -560,16 +577,39 @@ export function provideTypeDiagnostics(doc: GdlDocument, td: TextDocument): Diag
 				}
 				return;
 
-			case 'array':
-				if (isKindMismatch(known, valueType)) {
+			// A standalone array is not typed at all as far as Archicad is
+			// concerned — confirmed against the application: mixing values in
+			// one throws no error, whatever the guide's wording suggests. So
+			// int and real are one kind here, and a number meeting a string is
+			// worth a word only because it is rarely deliberate.
+			case 'array': {
+				const held = kindOf(known);
+				const given = kindOf(valueType);
+				if (held !== 'unknown' && given !== 'unknown' && held !== given) {
 					report(
 						target.token,
 						target.nameLength,
-						`Array \`${shown}\` holds ${typeLabel(known)} values — assigning a ${typeLabel(valueType)} mixes types.`,
+						`Array \`${shown}\` holds ${kindLabel(held)} values — assigning a ${kindLabel(given)} mixes types. GDL allows it, but it is rarely deliberate.`,
 						DiagnosticSeverity.Warning,
 					);
 				}
+				// Whether or not that was worth a word, the array now holds more
+				// than one type and has no element type to report on a read of
+				// it. Both guesses are wrong on real code: `beamProfile_m_AOL`
+				// tabulates coordinates beside integer status codes and reads
+				// `poly[j + 3]` as a status, while `Zone_stamp_macro_GS` reads
+				// one column of a table of mixed rows as a format code. Calling
+				// either a real produced a bogus float-comparison warning; so
+				// the honest answer is `unknown`, which every check here is
+				// already built to stay quiet about.
+				env.set(target.key, {
+					type: 'unknown',
+					container: target.container,
+					mixed: true,
+					...(existing ? { declared: existing.declared, parameterName: existing.parameterName } : {}),
+				});
 				return;
+			}
 
 			default:
 				// Plain variables convert between int and float silently; only

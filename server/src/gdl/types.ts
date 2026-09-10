@@ -35,6 +35,36 @@ export function isKindMismatch(a: GdlType, b: GdlType): boolean {
 	return a !== b;
 }
 
+/**
+ * The coarse kind a value has where int and real are not told apart.
+ *
+ * A standalone array is the case this exists for. Archicad does not enforce
+ * element types in one at all — confirmed by the project owner against the
+ * application, not merely inferred from the guide — so `1` and `2.5` in the
+ * same array are simply numbers, and the only mix worth mentioning is a number
+ * against a string. Dictionaries keep the finer distinction, where it is a real
+ * error.
+ */
+export type GdlKind = 'numeric' | 'string' | 'dict' | 'unknown';
+
+export function kindOf(t: GdlType): GdlKind {
+	if (isNumeric(t)) return 'numeric';
+	return t === 'string' || t === 'dict' ? t : 'unknown';
+}
+
+export function kindLabel(k: GdlKind): string {
+	switch (k) {
+		case 'numeric':
+			return 'Numeric';
+		case 'string':
+			return 'String';
+		case 'dict':
+			return 'Dictionary';
+		default:
+			return 'unknown';
+	}
+}
+
 export function typeLabel(t: GdlType): string {
 	switch (t) {
 		case 'int':
