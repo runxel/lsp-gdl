@@ -27,7 +27,7 @@ export interface MasterVariable {
 /** Supplies current text for a URI, preferring unsaved editor content. */
 export type TextResolver = (uri: string) => string | undefined;
 
-/** Cached per master script, invalidated when its text changes. */
+/** Cached per script, invalidated when its text changes. */
 const cache = new Map<string, { text: string; doc: GdlDocument }>();
 
 /** True for names the house style marks as script-private. */
@@ -49,23 +49,31 @@ function siblingScript(
 
 	const sibling = libPartScripts(libpart.root).find((s) => s.kind === kind);
 	if (!sibling || sibling.uri === uri) return undefined;
+	return analyzedScript(sibling.uri, resolve);
+}
 
-	// Prefer unsaved editor content; fall back to what is on disk, since a
-	// sibling script is usually not the file being edited.
-	let text = resolve(sibling.uri);
+/**
+ * Any script by URI, analysed and cached until its text changes.
+ *
+ * Prefers unsaved editor content and falls back to what is on disk, since a
+ * script reached from another one — a sibling, or a macro it calls — is
+ * usually not the file being edited.
+ */
+export function analyzedScript(uri: string, resolve: TextResolver): GdlDocument | undefined {
+	let text = resolve(uri);
 	if (text === undefined) {
 		try {
-			text = readFileSync(URI.parse(sibling.uri).fsPath, 'utf8');
+			text = readFileSync(URI.parse(uri).fsPath, 'utf8');
 		} catch {
 			return undefined;
 		}
 	}
 
-	const cached = cache.get(sibling.uri);
+	const cached = cache.get(uri);
 	if (cached && cached.text === text) return cached.doc;
 
-	const doc = analyze(sibling.uri, text);
-	cache.set(sibling.uri, { text, doc });
+	const doc = analyze(uri, text);
+	cache.set(uri, { text, doc });
 	return doc;
 }
 

@@ -47,6 +47,12 @@ Solid but still quite early. The foundations are in place and have been tested a
   - "`group`" names can be renamed as well
   - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
 - **Go-to-definition** (⌘-click) for **Group commands**
+- **Called Macros view** in the Explorer — every macro the open script calls,
+  followed recursively through the workspace and drawn as a classic tree
+  (`+`/`−` boxes, dotted connectors). Click a macro to open the script that
+  call runs; Alt-click, or the arrow at the row's end, jumps to the call.
+  Macros only present as a `.gsm`, not in the workspace at all, or named by a
+  variable nothing assigns, are shown as such rather than hidden.
 
 
 ## Requirements

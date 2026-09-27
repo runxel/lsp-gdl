@@ -6,6 +6,7 @@
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
  *      GDL reports these as a single unhelpful error at the end of the script.
+ *      Includes an `ELSE` or `ENDIF` swallowed by a stray `\` continuation.
  *   2. A command used in a script where it is not valid, e.g. `CUTPLANE` in
  *      the parameter script.
  *   3. Unterminated string literals.
@@ -176,6 +177,81 @@ function checkBlocks(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	return diagnostics;
 }
 
+/**
+ * Block keywords that only mean anything at the head of their own statement.
+ * `ELSE` is the exception, being the middle clause of a one-line `IF` as well;
+ * see `checkSwallowedKeywords`.
+ */
+const HEAD_ONLY = new Set(['else', 'endif', 'next', 'endwhile', 'until', 'endgroup', 'endparagraph']);
+
+/**
+ * A `\` continuation that runs into a block keyword on a later line:
+ *
+ *     if i_style = STYLE_FRAMED then
+ *         put \               <- the arguments were never written
+ *                             <- blank, still continuing
+ *     else
+ *
+ * The continuation carries through blank and commented-out lines — it has to,
+ * see the lexer — so the `ELSE` is joined onto the `PUT` and no longer belongs
+ * to the `IF`. `checkBlocks` sees nothing wrong, since an `ELSE` never opens or
+ * closes anything; a swallowed `ENDIF` or `NEXT` at least leaves its block
+ * unclosed, but that error points at the opener, not at the `\` that did it.
+ * Reported by the project owner.
+ *
+ * The comma spelling of the same slip is `commas.ts`'s trailing-comma check,
+ * every one of these words being a statement in the keyword table.
+ */
+function checkSwallowedKeywords(doc: GdlDocument, td: TextDocument): Diagnostic[] {
+	const text = doc.text;
+	const diagnostics: Diagnostic[] = [];
+
+	for (const stmt of doc.statements) {
+		const toks = stmt.tokens;
+		let thens = 0;
+		let elses = 0;
+		// The token that opens the current clause, which names the command the
+		// keyword has been swallowed into.
+		let clause = toks[0];
+
+		for (let i = 1; i < toks.length; i++) {
+			const tok = toks[i];
+			const prev = toks[i - 1];
+			if (prev.type === 'identifier' && (prev.lower === 'then' || prev.lower === 'else')) clause = tok;
+			if (tok.type !== 'identifier') continue;
+
+			const word = tok.lower;
+			if (word === 'then') thens++;
+			if (!HEAD_ONLY.has(word)) continue;
+			// `IF a THEN PUT 1 \` over `ELSE PUT 2` is a one-line IF wrapped, and
+			// its ELSE is still the IF's own.
+			const ownElse = word === 'else' && thens > elses;
+			if (word === 'else') elses++;
+			if (ownElse) continue;
+
+			// Joined by a `\`? It is the first thing after the previous token —
+			// a comment can only follow it, never stand in front.
+			let k = prev.end;
+			while (k < tok.start && (text[k] === ' ' || text[k] === '\t')) k++;
+			if (text[k] !== '\\') continue;
+
+			const keyword = tok.text.toUpperCase();
+			const into = clause.type === 'identifier' ? clause.text.toUpperCase() : undefined;
+			diagnostics.push({
+				severity: DiagnosticSeverity.Error,
+				range: { start: td.positionAt(k), end: td.positionAt(k + 1) },
+				message:
+					`This \`\\\` continues the statement into \`${keyword}\` on line ` +
+					`${td.positionAt(tok.start).line + 1}, which then reads as part of ` +
+					(into ? `\`${into}\`` : 'this statement') +
+					` rather than as a statement of its own.`,
+				source: SOURCE,
+			});
+		}
+	}
+	return diagnostics;
+}
+
 function checkScriptContext(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const script = doc.script;
 	// The master script runs ahead of every other script, so anything goes.
@@ -248,6 +324,7 @@ export function provideDiagnostics(
 	return [
 		...checkStrings(doc, td),
 		...checkBlocks(doc, td),
+		...checkSwallowedKeywords(doc, td),
 		...checkScriptContext(doc, td),
 		...provideOperatorDiagnostics(doc, td),
 		...provideParenDiagnostics(doc, td),

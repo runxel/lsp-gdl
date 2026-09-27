@@ -1,0 +1,4 @@
+! ––– 2D script ––– !
+! Run when TestObject's 2D script calls this macro.
+
+call "Not In This Workspace" parameters all

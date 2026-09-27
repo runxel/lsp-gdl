@@ -1,0 +1,280 @@
+/*
+ * The Called Macros tree, drawn the way a classic file browser draws one:
+ * `+`/`−` boxes on the branches and dotted connector lines between a node and
+ * its children.
+ *
+ * Every row spans the full width, so hover and selection read like the rest of
+ * the workbench, which means rows are not nested in padding. Each row and each
+ * branch instead carries its `--depth`, and every position below is computed
+ * from it — the connector of a node at depth d runs through the middle of its
+ * gutter, at `--x`, which is exactly the middle of its parent's icon.
+ */
+
+:root {
+	--row: 22px;
+	--indent: 16px;
+	--pad: 4px;
+	--line: var(--vscode-tree-indentGuidesStroke, #a9a9a9);
+	--box-border: var(--vscode-descriptionForeground, #717171);
+	--box-sign: var(--vscode-foreground, #333);
+	--box-fill: var(--vscode-sideBar-background, #fff);
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+	background: var(--vscode-sideBar-background, transparent);
+	color: var(--vscode-foreground);
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	user-select: none;
+}
+
+#tree {
+	outline: none;
+	padding-bottom: 4px;
+}
+
+ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+li {
+	position: relative;
+	--x: calc(var(--pad) + var(--depth) * var(--indent) + var(--indent) / 2);
+	outline: none;
+}
+
+/*
+ * The connectors. Dotted by gradient rather than `border-style: dotted`, which
+ * Chromium draws as blurred round dots at some zoom levels; this is one pixel
+ * on, one off, like the original. Drawn above the rows (`z-index`), so a hover
+ * or selection highlight does not break the line running through it.
+ */
+li.child::before {
+	content: "";
+	position: absolute;
+	left: var(--x);
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background-image: linear-gradient(to bottom, var(--line) 50%, transparent 50%);
+	background-size: 1px 2px;
+	z-index: 1;
+	pointer-events: none;
+}
+
+/* The last child's line stops at its own row: nothing below hangs off it. */
+li.child:last-child::before {
+	bottom: auto;
+	height: calc(var(--row) / 2 + 1px);
+}
+
+li.child > .row::before {
+	content: "";
+	position: absolute;
+	left: var(--x);
+	top: calc(var(--row) / 2);
+	width: calc(var(--indent) / 2);
+	height: 1px;
+	background-image: linear-gradient(to right, var(--line) 50%, transparent 50%);
+	background-size: 2px 1px;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	height: var(--row);
+	line-height: var(--row);
+	padding-left: calc(var(--pad) + var(--depth) * var(--indent));
+	padding-right: 4px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.row:hover {
+	background: var(--vscode-list-hoverBackground);
+	color: var(--vscode-list-hoverForeground, inherit);
+}
+
+li[aria-selected="true"] > .row {
+	background: var(--vscode-list-inactiveSelectionBackground);
+	color: var(--vscode-list-inactiveSelectionForeground, inherit);
+}
+
+#tree:focus-within li[aria-selected="true"] > .row {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+
+li:focus-visible > .row,
+li:focus > .row {
+	outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
+	outline-offset: -1px;
+}
+
+/* The gutter holds the box, centred on the connector. */
+.gutter {
+	position: relative;
+	flex: none;
+	width: var(--indent);
+	height: var(--row);
+}
+
+.box {
+	position: absolute;
+	box-sizing: border-box;
+	left: calc(var(--indent) / 2 - 4px);
+	top: calc(var(--row) / 2 - 4px);
+	width: 9px;
+	height: 9px;
+	border: 1px solid var(--box-border);
+	background: var(--box-fill);
+	z-index: 2;
+}
+
+.box::before,
+.box::after {
+	content: "";
+	position: absolute;
+	background: var(--box-sign);
+}
+
+/* The bar of both signs. */
+.box::before {
+	left: 1px;
+	top: 3px;
+	width: 5px;
+	height: 1px;
+}
+
+/* The upright of the `+`, only while collapsed. */
+.box::after {
+	left: 3px;
+	top: 1px;
+	width: 1px;
+	height: 5px;
+}
+
+li[aria-expanded="true"] > .row .box::after {
+	display: none;
+}
+
+li:not([aria-expanded]) > .row .box {
+	display: none;
+}
+
+.icon {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	margin-right: 5px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.icon svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.1;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+.desc {
+	flex: 0 100 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	margin-left: 0.5em;
+	color: var(--vscode-descriptionForeground);
+	font-size: 0.92em;
+}
+
+li[aria-selected="true"] > .row .desc {
+	color: inherit;
+	opacity: 0.8;
+}
+
+/* What each kind of node is. */
+.status-root > .row .icon { color: var(--vscode-symbolIcon-fileForeground, var(--vscode-foreground)); }
+.status-source > .row .icon { color: var(--vscode-symbolIcon-classForeground, #ee9d28); }
+.status-recursive > .row .icon { color: var(--vscode-symbolIcon-classForeground, #ee9d28); }
+.status-binary > .row .icon,
+.status-missing > .row .icon { color: var(--vscode-disabledForeground, #999); }
+.status-computed > .row .icon { color: var(--vscode-symbolIcon-variableForeground, #75beff); }
+
+.status-root > .row .label { font-weight: 600; }
+.status-missing > .row .label,
+.status-binary > .row .label { color: var(--vscode-descriptionForeground); }
+.status-computed > .row .label { font-style: italic; }
+
+/* Go to the call: shown on the row under the pointer or the selection. */
+.goto {
+	flex: none;
+	margin-left: auto;
+	padding: 0;
+	width: 20px;
+	height: 20px;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.goto svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.row:hover .goto,
+li[aria-selected="true"] > .row .goto {
+	display: flex;
+}
+
+.goto:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+#empty,
+#note {
+	margin: 0;
+	padding: 6px 12px 6px 20px;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.4;
+}
+
+@media (forced-colors: active) {
+	li.child::before,
+	li.child > .row::before {
+		background-image: linear-gradient(to bottom, CanvasText 50%, transparent 50%);
+	}
+	li.child > .row::before {
+		background-image: linear-gradient(to right, CanvasText 50%, transparent 50%);
+	}
+}

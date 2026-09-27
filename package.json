@@ -4,7 +4,7 @@
 	"description": "A language server for GDL (Geometric Description Language) for Archicad.",
 	"author": "Lucas Becker",
 	"license": "MIT",
-	"version": "0.5.1",
+	"version": "0.6.1",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/runxel/lsp-gdl"
@@ -36,13 +36,71 @@
 				"title": "Align argument lists",
 				"category": "GDL",
 				"enablement": "editorLangId == gdl-hsf"
+			},
+			{
+				"command": "gdl.calledMacros.refresh",
+				"title": "Refresh",
+				"category": "GDL",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "gdl.calledMacros.expandAll",
+				"title": "Expand All",
+				"category": "GDL",
+				"icon": "$(expand-all)"
+			},
+			{
+				"command": "gdl.calledMacros.collapseAll",
+				"title": "Collapse All",
+				"category": "GDL",
+				"icon": "$(collapse-all)"
 			}
 		],
+		"views": {
+			"explorer": [
+				{
+					"type": "webview",
+					"id": "gdl.calledMacros",
+					"name": "Called Macros",
+					"icon": "$(symbol-method)",
+					"when": "gdl.active"
+				}
+			]
+		},
 		"menus": {
 			"commandPalette": [
 				{
 					"command": "gdl.alignArgumentLists",
 					"when": "editorLangId == gdl-hsf"
+				},
+				{
+					"command": "gdl.calledMacros.refresh",
+					"when": "false"
+				},
+				{
+					"command": "gdl.calledMacros.expandAll",
+					"when": "false"
+				},
+				{
+					"command": "gdl.calledMacros.collapseAll",
+					"when": "false"
+				}
+			],
+			"view/title": [
+				{
+					"command": "gdl.calledMacros.refresh",
+					"when": "view == gdl.calledMacros",
+					"group": "navigation@1"
+				},
+				{
+					"command": "gdl.calledMacros.expandAll",
+					"when": "view == gdl.calledMacros",
+					"group": "navigation@2"
+				},
+				{
+					"command": "gdl.calledMacros.collapseAll",
+					"when": "view == gdl.calledMacros",
+					"group": "navigation@3"
 				}
 			]
 		},

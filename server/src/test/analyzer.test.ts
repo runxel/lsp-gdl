@@ -96,6 +96,34 @@ test('unbalanced blocks are reported', () => {
 	assert.match(messages('for i = 1 to 3\n\taddx 1\nendif')[0], /does not close/);
 });
 
+test('a block keyword swallowed by a `\\` continuation is reported', () => {
+	// Reported by the project owner: the continuation runs through the blank
+	// line, so the ELSE is joined onto the PUT and the IF never sees it.
+	const text = 'if i_style = STYLE_FRAMED then\n\t\tput \\\n\n\telse\n\t\taddx 1\nendif';
+	const [d, ...rest] = diagnose(text).filter((d) => /continues the statement/.test(d.message));
+	assert.deepEqual(rest, []);
+	assert.equal(
+		d.message,
+		'This `\\` continues the statement into `ELSE` on line 4, which then reads as part of `PUT` ' +
+			'rather than as a statement of its own.',
+	);
+	assert.deepEqual(d.range, { start: { line: 1, character: 6 }, end: { line: 1, character: 7 } });
+
+	// A comment line carries the continuation just as a blank one does.
+	assert.match(messages('if a then\n\tput 1, \\\n\t! note\nendif').join('\n'), /into `ENDIF` on line 4/);
+	assert.match(messages('for i = 1 to 3\n\taddx 1 \\\nnext i').join('\n'), /into `NEXT` on line 3/);
+	// After THEN, the command after it is the one that swallowed the keyword.
+	assert.match(messages('if a then\n\tif b then addx \\\nendif').join('\n'), /into `ENDIF` .* `ADDX`/);
+});
+
+test('a wrapped one-line IF keeps its own ELSE', () => {
+	const found = (text: string) => messages(text).filter((m) => /continues the statement/.test(m));
+	assert.deepEqual(found('if a then addx 1 \\\n\telse addy 1'), []);
+	assert.deepEqual(found('if a | \\\n\tb then addx 1 \\\nelse addy 1'), []);
+	// A plain line break ends the statement, as ever.
+	assert.deepEqual(found('if a then\n\taddx 1\nelse\n\taddy 1\nendif'), []);
+});
+
 test('a command from the wrong script is flagged', () => {
 	assert.match(messages('circle2 0, 0, 1')[0], /not valid in the 3D script/);
 });

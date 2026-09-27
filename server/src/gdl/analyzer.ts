@@ -41,8 +41,18 @@ export interface LabelInfo {
 }
 
 export interface MacroCall {
+	/** The literal's contents, or the identifier as written. */
 	readonly name: string;
+	/**
+	 * `CALL "leg"` names the macro outright; `CALL macroname` names it through
+	 * a variable or parameter — or is the macro's own name written unquoted,
+	 * which the guide allows for any name spelt like an identifier. Telling
+	 * those two apart needs the rest of the script, so `gdl/macros.ts` does it.
+	 */
+	readonly spelling: 'string' | 'identifier';
+	/** Offset of the name token. */
 	readonly at: number;
+	readonly end: number;
 }
 
 export interface GdlDocument {
@@ -209,15 +219,22 @@ function analyzeStatements(statements: readonly Statement[]) {
 					}
 				}
 			}
+		}
 
-			// `CALL "macro name"` — the macro dependency of this libpart.
-			if (stmt.head === 'call') {
-				const target = toks[1];
-				if (target?.type === 'string') {
-					macroCalls.push({ name: target.text.slice(1, -1), at: target.start });
-				}
+		// `CALL "macro name"` — the macro dependency of this libpart. Anywhere
+		// in the statement, not only at its head: `IF a THEN CALL "m"` is 11
+		// of the corpus's 1294 calls.
+		for (let i = 0; i < toks.length; i++) {
+			if (toks[i].type !== 'identifier' || toks[i].lower !== 'call') continue;
+			const target = toks[i + 1];
+			if (target?.type === 'string' && !target.unterminated) {
+				macroCalls.push({ name: target.text.slice(1, -1), spelling: 'string', at: target.start, end: target.end });
+			} else if (target?.type === 'identifier') {
+				macroCalls.push({ name: target.text, spelling: 'identifier', at: target.start, end: target.end });
 			}
+		}
 
+		if (first.type === 'identifier') {
 			// `FOR i = 1 TO n` defines the loop variable.
 			if (stmt.head === 'for' && toks[1]?.type === 'identifier') {
 				define(toks[1], false);

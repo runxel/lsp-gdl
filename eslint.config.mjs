@@ -29,6 +29,19 @@ export default tseslint.config(
 		}
 	},
 	{
+		// The Called Macros view's page runs in a webview, not in Node.
+		files: ['client/media/**/*.js'],
+		languageOptions: {
+			sourceType: 'script',
+			globals: {
+				acquireVsCodeApi: 'readonly',
+				CSS: 'readonly',
+				document: 'readonly',
+				window: 'readonly',
+			}
+		}
+	},
+	{
 		plugins: {
 			'@stylistic': stylistic
 		},

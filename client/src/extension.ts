@@ -25,6 +25,8 @@ import {
 	type Range as LspRange,
 } from 'vscode-languageclient/node';
 
+import { MacroTreeView } from './macroTree';
+
 let client: LanguageClient;
 
 export function activate(context: ExtensionContext) {
@@ -55,8 +57,13 @@ export function activate(context: ExtensionContext) {
 		documentSelector: [{ scheme: 'file', language: 'gdl-hsf' }],
 		synchronize: {
 			// A library part's parameters live in paramlist.xml, not in the
-			// script — so the server must be told when they change.
-			fileEvents: workspace.createFileSystemWatcher('**/{paramlist,libpartdata}.xml'),
+			// script — so the server must be told when they change. A part
+			// appearing or going away, source or `.gsm`, changes what a
+			// `CALL` resolves to.
+			fileEvents: [
+				workspace.createFileSystemWatcher('**/{paramlist,libpartdata}.xml'),
+				workspace.createFileSystemWatcher('**/*.{gsm,GSM}', false, true, false),
+			],
 		},
 		initializationOptions: { referenceRoot },
 	};
@@ -64,6 +71,12 @@ export function activate(context: ExtensionContext) {
 	client = new LanguageClient('gdl', 'GDL Language Server', serverOptions, clientOptions);
 
 	context.subscriptions.push(commands.registerCommand('gdl.alignArgumentLists', alignArgumentLists));
+
+	// The view is contributed with `when: gdl.active`, so it appears in the
+	// Explorer only once a GDL script has woken the extension.
+	void commands.executeCommand('setContext', 'gdl.active', true);
+	const macroTree = new MacroTreeView(context, () => client);
+	context.subscriptions.push(macroTree);
 
 	context.subscriptions.push(
 		endMarkerDecoration,
@@ -83,7 +96,10 @@ export function activate(context: ExtensionContext) {
 	// failed start reports itself in the client's own output channel; there is
 	// simply nothing to draw, so it is swallowed here.
 	void client.start().then(
-		() => refreshEndMarkers(),
+		() => {
+			void refreshEndMarkers();
+			macroTree.serverReady();
+		},
 		() => undefined,
 	);
 }

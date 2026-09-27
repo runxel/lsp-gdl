@@ -1,0 +1,5 @@
+! ––– Master script ––– !
+! Runs ahead of whichever script called the macro, so its calls belong
+! under this macro in every context.
+
+call "TestSubMacro" parameters all

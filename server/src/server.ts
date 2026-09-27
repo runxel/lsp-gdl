@@ -16,15 +16,18 @@ import {
 	TextDocumentSyncKind,
 	InitializeResult,
 	DocumentDiagnosticReportKind,
+	FileChangeType,
 	ResponseError,
 	ErrorCodes,
 	type TextDocumentIdentifier,
 	type DocumentDiagnosticReport,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { URI } from 'vscode-uri';
 
 import { analyze, type GdlDocument } from './gdl/analyzer';
 import { invalidateLibPartCache } from './gdl/libpart';
+import { invalidateLibraryIndex, setLibraryRoots } from './gdl/libraryIndex';
 import { setReferenceRoot } from './gdl/referenceDocs';
 import { setCommandDocsRoot } from './gdl/commandDocs';
 import { provideColorPresentations, provideDocumentColors } from './providers/colors';
@@ -34,6 +37,7 @@ import { provideHover } from './providers/hover';
 import { provideDiagnostics } from './providers/diagnostics';
 import { provideFormattingEdits, type AlignOptions } from './providers/format';
 import { provideInlayHints } from './providers/inlayHints';
+import { provideMacroTree } from './providers/macroTree';
 import { provideScriptEndMarkers } from './providers/markers';
 import { provideSignatureHelp } from './providers/signatureHelp';
 import { provideRename, resolveRenameTarget, RenameError, type TextResolver } from './providers/rename';
@@ -93,6 +97,7 @@ connection.onInitialize((params: InitializeParams) => {
 	hasWorkspaceFolderCapability = !!capabilities.workspace?.workspaceFolders;
 
 	const referenceRoot = (params.initializationOptions as GdlInitializationOptions | undefined)?.referenceRoot;
+	setWorkspaceFolders(params.workspaceFolders ?? []);
 	setReferenceRoot(referenceRoot);
 	setCommandDocsRoot(referenceRoot);
 
@@ -159,11 +164,22 @@ connection.onInitialized(() => {
 		connection.client.register(DidChangeConfigurationNotification.type, undefined);
 	}
 	if (hasWorkspaceFolderCapability) {
-		connection.workspace.onDidChangeWorkspaceFolders(() => {
+		connection.workspace.onDidChangeWorkspaceFolders(async () => {
 			invalidateLibPartCache();
+			setWorkspaceFolders((await connection.workspace.getWorkspaceFolders()) ?? []);
 		});
 	}
 });
+
+/** The folders a `CALL` is resolved against — see `gdl/libraryIndex.ts`. */
+function setWorkspaceFolders(folders: readonly { uri: string }[]): void {
+	setLibraryRoots(
+		folders.flatMap((f) => {
+			const uri = URI.parse(f.uri);
+			return uri.scheme === 'file' ? [uri.fsPath] : [];
+		}),
+	);
+}
 
 connection.onDidChangeConfiguration((change) => {
 	if (hasConfigurationCapability) {
@@ -353,9 +369,28 @@ connection.onRequest(
 	},
 );
 
-connection.onDidChangeWatchedFiles(() => {
+/**
+ * `gdl/macroTree` — the macros the script calls, followed through the
+ * workspace, for the client's sidebar. See `providers/macroTree.ts`.
+ *
+ * Answered for a document the editor has open; the macros further down are
+ * read from disk unless they are open too.
+ */
+connection.onRequest(
+	'gdl/macroTree',
+	(params: { textDocument: TextDocumentIdentifier }) => {
+		const textDocument = documents.get(params.textDocument.uri);
+		if (!textDocument) return null;
+		return provideMacroTree(getAnalysis(textDocument), resolveText);
+	},
+);
+
+connection.onDidChangeWatchedFiles((params) => {
 	// paramlist.xml or libpartdata.xml changed on disk — drop cached parameters.
 	invalidateLibPartCache();
+	// A part appearing or going away changes what a `CALL` resolves to; an
+	// edited one does not, so the walk is not repeated for every re-export.
+	if (params.changes.some((c) => c.type !== FileChangeType.Changed)) invalidateLibraryIndex();
 	connection.languages.diagnostics.refresh();
 });
 

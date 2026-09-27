@@ -14,6 +14,10 @@ group "not_here"
 	!...
 endgroup
 
+! Followed through the workspace by the Called Macros view in the
+! Explorer: TestMacro calls on into TestSubMacro, which calls back.
+call "TestMacro" parameters all
+
 
 end param1,
 	param2
