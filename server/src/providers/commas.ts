@@ -81,6 +81,9 @@ const NO_COMMA_AFTER_FIRST = new Set([
 	'paragraph',
 	'textblock',
 	'textblock_',
+	// `CALL macro_name_string [,] parameter_list` — the guide's own example is
+	// `CALL "leg" 2, , 5`.
+	'call',
 ]);
 
 /**
@@ -185,6 +188,65 @@ function checkMissingCommas(stmt: Statement, td: TextDocument): Diagnostic[] {
 				message: `Missing comma between \`${left.text}\` and \`${right.text}\`.`,
 				source: SOURCE,
 			});
+		}
+
+		cursor = next;
+	}
+	return diagnostics;
+}
+
+/**
+ * Two commas with nothing between them — an argument left out.
+ *
+ *     put \
+ *         A, A-_do, 0,
+ *         A, 0,, 0,        <- one value short
+ *         0, 0, 0
+ *
+ * Found in `Checkbox AOL/2d.gdl`, and the only one in the corpus. Unlike the
+ * other slips here this is fatal — confirmed by the project owner, the object
+ * does not run — so it is an `Error` where they are warnings.
+ *
+ * The one place GDL accepts a gap is a macro called with bare values, which
+ * the guide gives as `CALL "leg" 2, , 5` — equally `leg 2, , 5`, the name used
+ * as a command — the skipped parameter taking its default. So a clause that is
+ * a macro call is left alone: `CALL`, or a head that is no keyword and is not
+ * being assigned to. `RANGE[,]` and `RANGE( , max)` never come this far, the
+ * gap there standing after a bracket rather than a comma.
+ */
+function checkEmptyArguments(stmt: Statement, td: TextDocument): Diagnostic[] {
+	const toks = stmt.tokens;
+	const diagnostics: Diagnostic[] = [];
+	let cursor = 0;
+	while (cursor < toks.length) {
+		let next = toks.length;
+		for (let j = cursor + 1; j < toks.length; j++) {
+			const t = toks[j];
+			if (t.type === 'identifier' && CLAUSE_STARTERS.has(t.lower)) {
+				next = j + 1;
+				break;
+			}
+		}
+
+		const command = toks[cursor];
+		const isMacroCall =
+			command.type === 'identifier' &&
+			(command.lower === 'call' || (lookupWithVariants(command.text) === undefined &&
+				!COMMAND_FIRST_WORDS.has(command.lower) && !isNamedArgument(toks, cursor)));
+
+		if (!isMacroCall) {
+			for (let i = cursor + 1; i < next; i++) {
+				const left = toks[i - 1];
+				const right = toks[i];
+				if (!(left.type === 'operator' && left.text === ',')) continue;
+				if (!(right.type === 'operator' && right.text === ',')) continue;
+				diagnostics.push({
+					severity: DiagnosticSeverity.Error,
+					range: { start: td.positionAt(left.start), end: td.positionAt(right.end) },
+					message: 'Empty argument — two commas with nothing between them.',
+					source: SOURCE,
+				});
+			}
 		}
 
 		cursor = next;
@@ -397,6 +459,7 @@ export function provideCommaDiagnostics(doc: GdlDocument, td: TextDocument): Dia
 	const diagnostics: Diagnostic[] = [];
 	for (const stmt of doc.statements) {
 		diagnostics.push(...checkMissingCommas(stmt, td));
+		diagnostics.push(...checkEmptyArguments(stmt, td));
 		diagnostics.push(...checkTrailingCommas(stmt, doc.text, td));
 	}
 	diagnostics.push(...checkStrandedArguments(doc, td));

@@ -9,6 +9,7 @@
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyze } from '../gdl/analyzer';
 import { provideCommaDiagnostics } from '../providers/commas';
@@ -62,6 +63,47 @@ test('commands that run their name into the list are exempt — once', () => {
 
 test('each clause of a single-line IF is measured separately', () => {
 	assert.deepEqual(check('if n > 0 then values "s" a else values "s" b'), []);
+});
+
+// --- empty arguments --------------------------------------------------------
+
+const EMPTY = 'Empty argument — two commas with nothing between them.';
+
+test('two commas with nothing between them are flagged', () => {
+	// Reported by the project owner, `Checkbox AOL/2d.gdl`.
+	assert.deepEqual(
+		check(
+			'put \\\n' +
+				'\t\t\t_do, 0, 0,\n' +
+				'\t\t\tA, A-_do, 0,\n' +
+				'\t\t\tA, 0,, 0,\n' +
+				'\t\t\t0, 0, 0\n',
+		),
+		[EMPTY],
+	);
+	assert.deepEqual(check('add2 1, , 2'), [EMPTY]);
+	assert.deepEqual(check('x = max(a,,b)'), [EMPTY]);
+	assert.deepEqual(check('if a then put 1,,2'), [EMPTY]);
+	assert.deepEqual(check('put 1,\n\t,2'), [EMPTY]);
+});
+
+test('an empty argument is an error, the object failing to run', () => {
+	const text = 'put 1,,2';
+	const td = TextDocument.create(URI, 'gdl-hsf', 1, text);
+	const [d] = provideCommaDiagnostics(analyze(URI, text), td);
+	assert.equal(d.severity, DiagnosticSeverity.Error);
+});
+
+test('a macro called with bare values may skip one', () => {
+	// The guide's own example: the gap takes the parameter's default.
+	assert.deepEqual(check('call "leg" 2, , 5'), []);
+	assert.deepEqual(check('leg 2, , 5'), []);
+	assert.deepEqual(check('if a then leg 2, , 5'), []);
+});
+
+test('an open-ended RANGE is not an empty argument', () => {
+	assert.deepEqual(check('values "a" range[,] step 0, 0.5'), []);
+	assert.deepEqual(check('values "a" range( , hi)'), []);
 });
 
 // --- trailing commas --------------------------------------------------------
