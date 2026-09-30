@@ -9,7 +9,8 @@
  *
  * Mouse:    click opens the macro's script as a preview; double-click keeps it
  *           open; the box toggles; Alt-click, or the arrow at the row's end,
- *           goes to the call instead.
+ *           goes to the call instead — and, for a macro called more than once,
+ *           to the next call each time, wrapping round after the last.
  * Keyboard: ↑ ↓ Home End move; → opens a branch or steps into it; ← closes it
  *           or steps out; + − toggle and * opens everything below, as in the
  *           classic tree; Space previews, Enter opens.
@@ -60,6 +61,13 @@
 	let selected;
 	/** @type {Map<string, any>} */
 	const nodesByKey = new Map();
+	/**
+	 * The call each node last went to, by key. Kept across redraws, so an
+	 * edit does not send the next click back to the first call; forgotten
+	 * with the root.
+	 * @type {Map<string, number>}
+	 */
+	const lastCall = new Map();
 
 	/** Scripts remembered at most; the oldest is forgotten first. */
 	const REMEMBERED = 50;
@@ -92,9 +100,41 @@
 		// A macro's children come from its master as well as its own script;
 		// say which, since it is the one that is not opened.
 		if (node.depth > 1 && node.from === '1d' && tree.script !== '1d') bits.push('master');
+		return bits;
+	}
+
+	/** The call a node last went to, unless an edit has since removed it. */
+	function lastOf(node, key) {
+		const at = lastCall.get(key);
+		return at !== undefined && at < node.callSites.length ? at : undefined;
+	}
+
+	/** `×3` until the calls are being stepped through, then `2/3`. */
+	function callCount(node, key) {
+		const n = node.callSites ? node.callSites.length : 0;
+		if (n < 2) return '';
+		const at = lastOf(node, key);
 		// Escaped, so the page reads the same whatever charset it is served in.
-		if (node.calls > 1) bits.push('\u00d7' + node.calls);
-		return bits.join(' \u00b7 ');
+		return at === undefined ? '\u00d7' + n : (at + 1) + '/' + n;
+	}
+
+	function descText(node, key) {
+		return [...node.desc, callCount(node, key)].filter(Boolean).join(' \u00b7 ');
+	}
+
+	/** The call the go-to button reaches next. */
+	function nextCall(node, key) {
+		const at = lastOf(node, key);
+		return at === undefined ? 0 : (at + 1) % node.callSites.length;
+	}
+
+	function gotoTitle(node, key) {
+		const n = node.callSites.length;
+		const next = nextCall(node, key);
+		const line = node.callSites[next].line + 1;
+		return n > 1
+			? 'Go to call ' + (next + 1) + ' of ' + n + ', line ' + line
+			: 'Go to the call, line ' + line;
 	}
 
 	function tooltip(node) {
@@ -107,15 +147,19 @@
 			case 'computed': lines.push('The name is held in `' + node.variable + '`, and nothing in reach assigns it one'); break;
 		}
 		const where = SCRIPT_LABELS[node.from] || 'script';
-		const calls = node.calls > 1 ? ' (' + node.calls + ' calls, first shown)' : '';
-		lines.push('Called from the ' + where + ', line ' + (node.callSite.line + 1) + calls);
+		const sites = node.callSites;
+		lines.push(sites.length > 1
+			? 'Called ' + sites.length + ' times, first from the ' + where + ', line ' + (sites[0].line + 1)
+			: 'Called from the ' + where + ', line ' + (sites[0].line + 1));
 		if (node.spelling === 'variable') lines.push('Through the variable ' + node.variable);
 		if (node.alternatives > 0) {
 			lines.push(node.alternatives === 1
 				? 'One other copy of this name is in the workspace; the nearest is shown'
 				: node.alternatives + ' other copies of this name are in the workspace; the nearest is shown');
 		}
-		lines.push('Alt-click to go to the call');
+		lines.push(sites.length > 1
+			? 'Alt-click to go to the calls, one at a time'
+			: 'Alt-click to go to the call');
 		return lines.join('\n');
 	}
 
@@ -153,18 +197,19 @@
 
 		row.append(gutter, icon, label);
 
-		if (node.desc) {
+		const text = typeof node.desc === 'string' ? node.desc : descText(node, key);
+		if (text) {
 			const desc = document.createElement('span');
 			desc.className = 'desc';
-			desc.textContent = node.desc;
+			desc.textContent = text;
 			row.appendChild(desc);
 		}
 
-		if (node.callSite) {
+		if (node.callSites && node.callSites.length > 0) {
 			const go = document.createElement('button');
 			go.className = 'goto';
 			go.tabIndex = -1;
-			go.title = 'Go to the call, line ' + (node.callSite.line + 1);
+			go.title = gotoTitle(node, key);
 			go.setAttribute('aria-label', go.title);
 			go.innerHTML = GOTO_ICON;
 			row.appendChild(go);
@@ -283,13 +328,41 @@
 	}
 
 	function openNode(li, { preview, callSite }) {
-		const node = nodesByKey.get(li.dataset.key || '');
+		const key = li.dataset.key || '';
+		const node = nodesByKey.get(key);
 		if (!node) return;
-		// Nothing to open for a macro that cannot be read, so the call is the
-		// useful place to go.
-		const target = !callSite && node.uri ? { uri: node.uri } : node.callSite;
-		if (!target) return;
-		vscode.postMessage({ type: 'open', preview, ...target });
+		if (!callSite && node.uri) {
+			vscode.postMessage({ type: 'open', preview, uri: node.uri });
+			return;
+		}
+		const sites = node.callSites;
+		if (!sites || sites.length === 0) return;
+		// Asked for the call outright, step on to the next one. A plain click on
+		// a macro that cannot be read lands on the call only because there is
+		// nothing else to open, so it stays where the stepping left off — a
+		// double-click being two clicks as well, stepping there would skip two.
+		let at;
+		if (callSite) {
+			at = nextCall(node, key);
+			lastCall.set(key, at);
+			refreshCount(li, node, key);
+		} else {
+			at = lastOf(node, key) ?? 0;
+		}
+		vscode.postMessage({ type: 'open', preview, ...sites[at] });
+	}
+
+	/** Updates a row's count and button after stepping to another call. */
+	function refreshCount(li, node, key) {
+		const row = li.querySelector(':scope > .row');
+		if (!row) return;
+		const desc = row.querySelector(':scope > .desc');
+		if (desc) desc.textContent = descText(node, key);
+		const go = row.querySelector(':scope > .goto');
+		if (go) {
+			/** @type {HTMLElement} */ (go).title = gotoTitle(node, key);
+			go.setAttribute('aria-label', gotoTitle(node, key));
+		}
 	}
 
 	treeEl.addEventListener('click', (event) => {
@@ -352,6 +425,7 @@
 				const changedRoot = !tree || tree.uri !== message.tree.uri;
 				tree = message.tree;
 				if (changedRoot) {
+					lastCall.clear();
 					const remembered = state.roots[tree.uri];
 					expanded = new Set(remembered ? remembered.expanded : ['']);
 					selected = remembered ? remembered.selected : '';

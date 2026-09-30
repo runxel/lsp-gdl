@@ -145,8 +145,7 @@ test('the tree follows what runs: a macro\'s master and its script of the caller
 
 test('a macro called twice is one node that counts its calls', () => {
 	const macA = treeFor('3d.gdl').children[0];
-	assert.equal(macA.calls, 2);
-	assert.equal(macA.callSite.line, 0);
+	assert.deepEqual(macA.callSites.map((site) => site.line), [0, 1]);
 });
 
 test('a node opens the macro\'s script of the same kind, and says where it was called', () => {
@@ -159,7 +158,7 @@ test('a node opens the macro\'s script of the same kind, and says where it was c
 	// A call through a variable names both.
 	assert.equal(macB.spelling, 'variable');
 	assert.equal(macB.variable, 'frame');
-	assert.equal(macB.callSite.line, 3);
+	assert.equal(macB.callSites[0].line, 3);
 });
 
 test('of two parts sharing a name, the nearer is taken', () => {

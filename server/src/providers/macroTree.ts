@@ -61,9 +61,11 @@ export interface MacroTreeNode {
 	readonly alternatives: number;
 	/** Which script of the caller holds the call. */
 	readonly from: ScriptKind | undefined;
-	/** The first call; `calls` counts the rest in the same scripts. */
-	readonly callSite: MacroTreeLocation;
-	readonly calls: number;
+	/**
+	 * Every call of this macro in the same scripts, in source order — the
+	 * caller's master first. The view steps through them one click at a time.
+	 */
+	readonly callSites: readonly MacroTreeLocation[];
 	readonly children: MacroTreeNode[];
 }
 
@@ -155,8 +157,7 @@ export function provideMacroTree(doc: GdlDocument, resolve: TextResolver): Macro
 				spelling: site.spelling,
 				...(site.variable ? { variable: site.variable } : {}),
 				from: caller.script,
-				callSite: locate(caller, site.start),
-				calls: group.length,
+				callSites: group.map((call) => locate(call.doc, call.site.start)),
 			};
 
 			if (site.name === undefined) {
