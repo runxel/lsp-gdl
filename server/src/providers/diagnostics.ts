@@ -6,7 +6,8 @@
  *
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
  *      GDL reports these as a single unhelpful error at the end of the script.
- *      Includes an `ELSE` or `ENDIF` swallowed by a stray `\` continuation.
+ *      Includes an `ELSE` or `ENDIF` swallowed by a stray `\` continuation,
+ *      and the mirror of it — a `THEN` stranded by a missing one.
  *   2. A command used in a script where it is not valid, e.g. `CUTPLANE` in
  *      the parameter script.
  *   3. Unterminated string literals.
@@ -44,6 +45,8 @@ import { provideParenDiagnostics } from './parens';
 import { provideLabelDiagnostics } from './labels';
 import { provideReservedNameDiagnostics } from './reservedNames';
 import { provideUnusedDiagnostics } from './unused';
+import { MAX_LINE_LENGTH } from './format';
+import type { QuickFix } from './codeActions';
 import type { TextResolver } from '../gdl/masterScript';
 
 export const SOURCE = 'gdl';
@@ -93,7 +96,12 @@ function opensBlock(stmt: Statement): string | undefined {
 		//             z = 3
 		//         ENDIF
 		//     ENDIF
-		case 'if': {
+		//
+		// A `THEN` heading its own statement is the second half of an `IF` whose
+		// `\` went missing — `checkMissingContinuations` reports that — and
+		// counts as the opener here, so its `ENDIF` is not blamed as well.
+		case 'if':
+		case 'then': {
 			const last = lastToken(stmt)?.lower;
 			return last === 'then' || last === 'else' ? 'IF' : undefined;
 		}
@@ -252,6 +260,102 @@ function checkSwallowedKeywords(doc: GdlDocument, td: TextDocument): Diagnostic[
 	return diagnostics;
 }
 
+/**
+ * The words that carry a statement on to its next clause, each with the
+ * command it belongs to and the words that may already have spelt that clause.
+ * `IF a GOTO 100` is complete without a `THEN`, which is why those are here.
+ */
+const CLAUSE_OWNERS: Readonly<Record<string, { owner: string; spelt: readonly string[] }>> = {
+	then: { owner: 'if', spelt: ['then', 'goto', 'gosub'] },
+	to: { owner: 'for', spelt: ['to'] },
+	step: { owner: 'for', spelt: ['step'] },
+};
+
+/**
+ * A wrapped condition whose last row lost its `\`:
+ *
+ *     if foo & \
+ *         bar                 <- `\` missing here
+ *     then
+ *
+ * The line break ends the `IF` at `bar`, and `THEN` becomes a statement of its
+ * own — which means nothing, and which Archicad reports once at the end of the
+ * script. Left alone the block form gets only `checkBlocks`' "ENDIF without a
+ * matching IF", pointing at the wrong end of the mistake, and the one-line
+ * form `then addx 1` gets nothing at all. Reported by the project owner.
+ *
+ * Judged only where the statement above is the command still waiting for that
+ * clause, so the report can name the fix, and the fix — a `\` after its last
+ * token — travels with the diagnostic for `codeActions.ts` to offer. The
+ * opposite slip, a trailing operator left before the `THEN`, is `operators.ts`'s.
+ */
+function checkMissingContinuations(doc: GdlDocument, td: TextDocument): Diagnostic[] {
+	const text = doc.text;
+	const diagnostics: Diagnostic[] = [];
+
+	for (let s = 1; s < doc.statements.length; s++) {
+		const stmt = doc.statements[s];
+		const clause = CLAUSE_OWNERS[stmt.head ?? ''];
+		if (!clause) continue;
+
+		// The statement above must still be waiting for this clause: its last
+		// `IF` (or `FOR`) with nothing after it that already spelt one.
+		const prev = doc.statements[s - 1];
+		const toks = prev.tokens;
+		let owner = -1;
+		for (let i = toks.length - 1; i >= 0; i--) {
+			if (toks[i].type === 'identifier' && toks[i].lower === clause.owner) {
+				owner = i;
+				break;
+			}
+		}
+		if (owner < 0) continue;
+		if (toks.slice(owner + 1).some((t) => t.type === 'identifier' && clause.spelt.includes(t.lower))) continue;
+
+		// It must have been ended by a line break — only whitespace or a
+		// comment after its last token — and not by a `:`.
+		const last = toks[toks.length - 1];
+		let k = last.end;
+		while (k < text.length && (text[k] === ' ' || text[k] === '\t')) k++;
+		if (k < text.length && text[k] !== '!' && text[k] !== '\r' && text[k] !== '\n') continue;
+
+		const keyword = stmt.tokens[0];
+		const lastLine = td.positionAt(last.end).line;
+		diagnostics.push({
+			severity: DiagnosticSeverity.Error,
+			range: { start: td.positionAt(keyword.start), end: td.positionAt(keyword.end) },
+			message:
+				`\`${keyword.text.toUpperCase()}\` stands on a line of its own — the ` +
+				`\`${toks[owner].text.toUpperCase()}\` above it ends at line ${lastLine + 1}, ` +
+				`which is missing a \`\\\`.`,
+			source: SOURCE,
+			data: continuationFix(td, last.end),
+		});
+	}
+	return diagnostics;
+}
+
+/**
+ * The quick fix for `checkMissingContinuations`: ` \` straight after the last
+ * token, ahead of any trailing comment. Held to the 255-character line limit
+ * like everything else that writes to a script — a bare `\` when the space
+ * would not fit, and no fix at all when neither does.
+ */
+function continuationFix(td: TextDocument, at: number): QuickFix | undefined {
+	const pos = td.positionAt(at);
+	const line = td
+		.getText({ start: { line: pos.line, character: 0 }, end: { line: pos.line + 1, character: 0 } })
+		.replace(/[\r\n]+$/, '');
+	const newText = [' \\', '\\'].find((t) => line.length + t.length <= MAX_LINE_LENGTH);
+	if (!newText) return undefined;
+	return {
+		quickFix: {
+			title: 'Continue the statement with `\\`',
+			edits: [{ range: { start: pos, end: pos }, newText }],
+		},
+	};
+}
+
 function checkScriptContext(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const script = doc.script;
 	// The master script runs ahead of every other script, so anything goes.
@@ -325,6 +429,7 @@ export function provideDiagnostics(
 		...checkStrings(doc, td),
 		...checkBlocks(doc, td),
 		...checkSwallowedKeywords(doc, td),
+		...checkMissingContinuations(doc, td),
 		...checkScriptContext(doc, td),
 		...provideOperatorDiagnostics(doc, td),
 		...provideParenDiagnostics(doc, td),

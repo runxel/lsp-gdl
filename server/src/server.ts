@@ -16,6 +16,7 @@ import {
 	TextDocumentSyncKind,
 	InitializeResult,
 	DocumentDiagnosticReportKind,
+	CodeActionKind,
 	FileChangeType,
 	ResponseError,
 	ErrorCodes,
@@ -30,6 +31,7 @@ import { invalidateLibPartCache } from './gdl/libpart';
 import { invalidateLibraryIndex, setLibraryRoots } from './gdl/libraryIndex';
 import { setReferenceRoot } from './gdl/referenceDocs';
 import { setCommandDocsRoot } from './gdl/commandDocs';
+import { provideCodeActions } from './providers/codeActions';
 import { provideColorPresentations, provideDocumentColors } from './providers/colors';
 import { provideCompletion, resolveCompletion } from './providers/completion';
 import { provideDefinition } from './providers/definition';
@@ -147,6 +149,9 @@ connection.onInitialize((params: InitializeParams) => {
 			documentFormattingProvider: true,
 			documentRangeFormattingProvider: true,
 			renameProvider: { prepareProvider: true },
+			// Fixes carried by the diagnostics themselves — see
+			// `providers/codeActions.ts`.
+			codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
 			diagnosticProvider: {
 				interFileDependencies: false,
 				workspaceDiagnostics: false,
@@ -336,6 +341,10 @@ connection.onDocumentRangeFormatting((params) => {
 		params.range,
 	);
 });
+
+connection.onCodeAction((params) =>
+	provideCodeActions(params.textDocument.uri, params.context.diagnostics),
+);
 
 connection.onSignatureHelp((params) => {
 	const textDocument = documents.get(params.textDocument.uri);

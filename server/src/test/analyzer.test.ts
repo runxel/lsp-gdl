@@ -9,6 +9,7 @@ import { strict as assert } from 'node:assert';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyze } from '../gdl/analyzer';
 import { provideDiagnostics } from '../providers/diagnostics';
+import { provideCodeActions, type QuickFix } from '../providers/codeActions';
 import { scriptKindFromUri } from '../gdl/scriptKind';
 
 const URI_3D = 'file:///Obj/scripts/3d.gdl';
@@ -122,6 +123,59 @@ test('a wrapped one-line IF keeps its own ELSE', () => {
 	assert.deepEqual(found('if a | \\\n\tb then addx 1 \\\nelse addy 1'), []);
 	// A plain line break ends the statement, as ever.
 	assert.deepEqual(found('if a then\n\taddx 1\nelse\n\taddy 1\nendif'), []);
+});
+
+test('a `THEN` stranded by a missing `\\` is reported, with the fix', () => {
+	// Reported by the project owner: the last row of a wrapped condition lost
+	// its `\\`, so the IF ends at `bar` and THEN heads a statement of its own.
+	// Before this the block form said only "ENDIF without a matching IF", and
+	// the one-line form nothing at all.
+	const text = 'if foo & \\\n\tbar\nthen\n\taddx 1\nendif';
+	const [d, ...rest] = diagnose(text);
+	assert.deepEqual(rest, []);
+	assert.equal(
+		d.message,
+		'`THEN` stands on a line of its own — the `IF` above it ends at line 2, which is missing a `\\`.',
+	);
+	assert.equal(d.severity, 1 /* Error */);
+	assert.deepEqual(d.range, { start: { line: 2, character: 0 }, end: { line: 2, character: 4 } });
+
+	// The fix goes straight after the last token, and leaves a clean script.
+	const [action, ...more] = provideCodeActions(URI_3D, [d]);
+	assert.deepEqual(more, []);
+	const [edit] = action.edit!.changes![URI_3D];
+	assert.deepEqual(edit, { range: { start: { line: 1, character: 4 }, end: { line: 1, character: 4 } }, newText: ' \\' });
+	const fixed = TextDocument.applyEdits(TextDocument.create(URI_3D, 'gdl', 1, text), [edit]);
+	assert.equal(fixed, 'if foo & \\\n\tbar \\\nthen\n\taddx 1\nendif');
+	assert.deepEqual(messages(fixed), []);
+
+	assert.match(messages('if foo & \\\n\tbar\nthen addx 1').join('\n'), /`THEN` stands on a line of its own/);
+	// No `\\` at all, and a line break still standing between the two.
+	assert.match(messages('if foo\n\nthen addx 1').join('\n'), /ends at line 1/);
+	assert.match(messages('for i = 1\n\tto 3\n\taddx 1\nnext i').join('\n'), /`TO` stands .* `FOR` above it/);
+});
+
+test('the `\\` goes ahead of a trailing comment, and inside the line limit', () => {
+	const fix = (text: string) => diagnose(text).find((d) => /stands on a line/.test(d.message))?.data;
+	assert.deepEqual(fix('if foo &\\\n\tbar\t! note\nthen addx 1'), {
+		quickFix: {
+			title: 'Continue the statement with `\\`',
+			edits: [{ range: { start: { line: 1, character: 4 }, end: { line: 1, character: 4 } }, newText: ' \\' }],
+		},
+	});
+	// Archicad refuses a line over 255 characters, so the fix never writes one.
+	const long = (n: number) => `if ${'a'.repeat(n - 3)}\nthen addx 1`;
+	assert.equal((fix(long(253)) as QuickFix).quickFix.edits[0].newText, ' \\');
+	assert.equal((fix(long(254)) as QuickFix).quickFix.edits[0].newText, '\\');
+	assert.equal(fix(long(255)), undefined);
+});
+
+test('a `THEN` is not stranded when the statement above did not want it', () => {
+	const found = (text: string) => messages(text).filter((m) => /stands on a line/.test(m));
+	// `IF a GOTO 100` is complete without one.
+	assert.deepEqual(found('if a goto 100\nthen addx 1'), []);
+	assert.deepEqual(found('if a then\n\taddx 1\nendif'), []);
+	assert.deepEqual(found('for i = 1 to 3 : next i'), []);
 });
 
 test('a command from the wrong script is flagged', () => {
