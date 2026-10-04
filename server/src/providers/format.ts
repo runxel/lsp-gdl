@@ -44,6 +44,10 @@
  *     `|\`, right-aligned so that the `\`s still line up and a row that ends
  *     the expression holds its `\` alone in the same column. See
  *     `splitTrailingOperator`.
+ *   - **Adjacent hotspots are one table**, though each is a statement of one
+ *     line: a run of `HOTSPOT2` or `HOTSPOT` lines is laid out like the rows of
+ *     a list, the `: unID = unID + 1` after each lining up as a column of its
+ *     own. The one place the unit is wider than a statement. See `blocksOf`.
  *   - **Indentation is the author's.** Column 0 is never moved, so the columns
  *     after it are computed from where each row actually starts.
  *   - **Padding follows the editor.** `insertSpaces` decides tabs or spaces and
@@ -115,6 +119,12 @@ interface Row {
 	/** A binary operator the row ends on, split out of its last cell. */
 	op?: Field;
 	cont?: Field;
+	/**
+	 * The statements sharing the line, from their `:` on — only ever on a row of
+	 * a hotspot block, the one place a line holds more than the row's own
+	 * statement. See `blocksOf`.
+	 */
+	rest?: Field;
 	comment?: Field;
 	/**
 	 * The row's last token so far, with what stands before it — everything
@@ -192,7 +202,7 @@ function padding(from: number, target: number, opts: AlignOptions): string {
 	if (opts.insertSpaces) return ' '.repeat(Math.max(1, target - from));
 	let out = '';
 	let col = from;
-	for (;;) {
+	for (; ;) {
 		const stop = (Math.floor(col / opts.tabSize) + 1) * opts.tabSize;
 		if (stop > target) break;
 		col = stop;
@@ -207,6 +217,29 @@ function padding(from: number, target: number, opts: AlignOptions): string {
  * the shapes this must not touch.
  */
 function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefined {
+	const rows = splitRows(stmt, lines);
+	if (!rows || rows.length < 2) return undefined;
+
+	for (const r of rows) {
+		if (r.cells.length === 0) return undefined;
+		// Everything before the first cell must be indentation. Anything else
+		// means a second statement shares the line.
+		if (!isIndent(text.slice(r.lineStart, r.cells[0].start))) return undefined;
+		if (!readTail(r, text)) return undefined;
+		splitTrailingOperator(r);
+	}
+	return rows;
+}
+
+function isIndent(s: string): boolean {
+	return !/[^ \t]/.test(s);
+}
+
+/**
+ * A statement's tokens as rows of cells, before anything around them is read —
+ * undefined where the cells cannot be told apart.
+ */
+function splitRows(stmt: Statement, lines: LineIndex): Row[] | undefined {
 	const rows: Row[] = [];
 	let row: Row | undefined;
 	let depth = 0;
@@ -263,17 +296,6 @@ function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefi
 	}
 	closeCell();
 	if (depth !== 0) return undefined;
-	if (rows.length < 2) return undefined;
-
-	for (const r of rows) {
-		if (r.cells.length === 0) return undefined;
-		// Everything before the first cell must be indentation. Anything else
-		// means a second statement shares the line.
-		const indent = text.slice(r.lineStart, r.cells[0].start);
-		if (/[^ \t]/.test(indent)) return undefined;
-		if (!readTail(r, text)) return undefined;
-		splitTrailingOperator(r);
-	}
 	return rows;
 }
 
@@ -283,14 +305,24 @@ function rowsOf(stmt: Statement, text: string, lines: LineIndex): Row[] | undefi
  *
  * Note the order — the lexer accepts a comment between the `\` and the line
  * ending (`if a |\  ! note`), never the other way round.
+ *
+ * `restEnd` is where the line's other statements end, given only for a row of
+ * a hotspot block: a `:` there opens the `rest` field, which runs to it. The
+ * statements' own tokens say where that is, so a `!` inside one of their
+ * strings is never taken for the comment.
  */
-function readTail(row: Row, text: string): boolean {
+function readTail(row: Row, text: string, restEnd?: number): boolean {
 	let i = row.cells[row.cells.length - 1].end;
 	const skipSpace = () => {
 		while (i < row.lineEnd && (text[i] === ' ' || text[i] === '\t')) i++;
 	};
 
 	skipSpace();
+	if (restEnd !== undefined && text[i] === ':' && i < restEnd) {
+		row.rest = { start: i, end: restEnd };
+		i = restEnd;
+		skipSpace();
+	}
 	if (text[i] === '\\' && i < row.lineEnd) {
 		row.cont = { start: i, end: i + 1 };
 		i++;
@@ -366,6 +398,83 @@ function runsOf(rows: readonly Row[], has: (r: Row) => boolean): number[][] {
 		run.push(i);
 	});
 	return runs;
+}
+
+/**
+ * The commands whose one-line statements are lined up across adjacent lines.
+ *
+ *     hotspot2 0,           0, unID, shaft_width, 1+256 : unID = unID + 1
+ *     hotspot2 shaft_width, 0, unID, shaft_width, 2     : unID = unID + 1
+ *     hotspot2 -1,          0, unID, shaft_width, 3     : unID = unID + 1
+ *
+ * Hotspots come in sets — the base, moving andreference points of one editable
+ * dimension, or the static corners of a body — and are written one to a line,
+ * so a set reads as a table whose columns are the arguments.
+ * Here the columns are real by construction rather than by judgement:
+ * every row is a separate statement of the *same* command, so cell *n* is
+ * argument *n* of it on every row. That is why none of `tableRows`'s caution applies,
+ * and why rows of different lengths — `hotspot2 x, y` beside a dynamic one —
+ * still share the columns they have.
+ */
+const BLOCK_COMMANDS: ReadonlySet<string> = new Set(['hotspot', 'hotspot2']);
+
+/**
+ * Every run of two or more adjacent lines each opening with a one-line
+ * statement of the same `BLOCK_COMMANDS` command, as rows.
+ *
+ * A row is the line, not the statement: `: unID = unID + 1` after it is the
+ * counter every dynamic hotspot carries, and it lines up as the `rest` field.
+ * Anything not understood ends the block rather than joining it — a line that
+ * opens with anything else, a hotspot continued onto another line, a label in
+ * front of it, a blank or a comment line between two of them. The last is the
+ * conservative reading of "next to each other": a commented-out hotspot inside
+ * a set would be left out of the columns, and the rows either side are then
+ * two blocks of their own.
+ */
+function blocksOf(doc: GdlDocument, text: string, lines: LineIndex): Row[][] {
+	const blocks: Row[][] = [];
+	let block: Row[] = [];
+	let head: string | undefined;
+	const flush = () => {
+		if (block.length >= 2) blocks.push(block);
+		block = [];
+	};
+
+	const stmts = doc.statements;
+	for (let i = 0; i < stmts.length;) {
+		const line = lines.lineAt(stmts[i].start);
+		let j = i + 1;
+		while (j < stmts.length && lines.lineAt(stmts[j].start) === line) j++;
+		const row = blockRow(stmts.slice(i, j), text, lines);
+		if (!row) flush();
+		else {
+			const prev = block[block.length - 1];
+			if (prev && (row.line !== prev.line + 1 || stmts[i].head !== head)) flush();
+			head = stmts[i].head;
+			block.push(row);
+		}
+		i = j;
+	}
+	flush();
+	return blocks;
+}
+
+/** The statements starting on one line as a block row, if they make one. */
+function blockRow(group: readonly Statement[], text: string, lines: LineIndex): Row | undefined {
+	const first = group[0];
+	if (!first.head || !BLOCK_COMMANDS.has(first.head)) return undefined;
+	const line = lines.lineAt(first.start);
+	for (const s of group) {
+		if (lines.lineAt(s.end - 1) !== line) return undefined;
+		if (s.tokens.some((t) => t.unterminated)) return undefined;
+	}
+	const rows = splitRows(first, lines);
+	if (rows?.length !== 1) return undefined;
+	const row = rows[0];
+	if (!isIndent(text.slice(row.lineStart, row.cells[0].start))) return undefined;
+	const restEnd = group.length > 1 ? group[group.length - 1].end : undefined;
+	if (!readTail(row, text, restEnd) || row.cont) return undefined;
+	return row;
 }
 
 /** A whitespace stretch to be rewritten. */
@@ -475,7 +584,12 @@ function tableRows(rows: readonly Row[]): ReadonlySet<number> {
  * Returns the gaps to rewrite, or undefined when the result would be too long
  * and the statement must therefore be left as it is.
  */
-function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefined {
+function layout(
+	rows: Row[],
+	table: ReadonlySet<number>,
+	text: string,
+	opts: AlignOptions,
+): Gap[] | undefined {
 	const limit = opts.maxLineLength ?? MAX_LINE_LENGTH;
 	const cellText = (r: Row, c: number) => text.slice(r.cells[c].start, r.cells[c].end);
 
@@ -507,7 +621,6 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 	// Every column is measured whether or not it is aligned: the `\` and the
 	// comment sit at the end of the row, so their columns are only as good as
 	// the running width of the cells in front of them.
-	const table = tableRows(rows);
 	const columns = Math.max(...rows.map((r) => r.cells.length));
 	const cellTarget: (number | undefined)[] = [];
 	for (let c = 1; c < columns; c++) {
@@ -567,8 +680,21 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 		}
 		return advance(text.slice(from, r.cont.start), col, opts.tabSize) + 1;
 	};
+	// The rest of a hotspot block's line — `: unID = unID + 1` — is a column of
+	// its own, however many arguments the hotspot in front of it was given: it
+	// is the same statement on every row, and that is what makes it worth lining
+	// up. A row never has both it and a `\`, so it simply follows on.
+	const restRows = rows.map((_, i) => i).filter((i) => rows[i].rest);
+	const restCol = columnOf(restRows, contEnd);
+	const restEnd = (i: number) => {
+		const r = rows[i];
+		if (!r.rest) return contEnd(i);
+		const before = r.cont ? r.cont.end : r.cells[r.cells.length - 1].end;
+		const start = restCol ?? advance(text.slice(before, r.rest.start), contEnd(i), opts.tabSize);
+		return advance(text.slice(r.rest.start, r.rest.end), start, opts.tabSize);
+	};
 	const commentRows = rows.map((_, i) => i).filter((i) => rows[i].comment);
-	const commentCol = columnOf(commentRows, contEnd);
+	const commentCol = columnOf(commentRows, restEnd);
 
 	const gaps: Gap[] = [];
 	const trims: Gap[] = [];
@@ -622,6 +748,13 @@ function layout(rows: Row[], text: string, opts: AlignOptions): Gap[] | undefine
 			col++;
 			prevEnd = r.cont.end;
 		}
+		if (r.rest) {
+			gap(prevEnd, r.rest.start, restCol);
+			const restText = text.slice(r.rest.start, r.rest.end);
+			out += restText;
+			col = advance(restText, col, opts.tabSize);
+			prevEnd = r.rest.end;
+		}
 		if (r.comment) {
 			gap(prevEnd, r.comment.start, commentCol);
 			out += text.slice(r.comment.start, r.comment.end);
@@ -663,10 +796,18 @@ export function provideFormattingEdits(
 
 		const rows = rowsOf(stmt, text, lines);
 		if (!rows) continue;
-		const gaps = layout(rows, text, opts);
-		if (!gaps) continue;
+		emit(layout(rows, tableRows(rows), text, opts));
+	}
+	// A block's rows are each a statement of one line, which the loop above never
+	// touches, so the two can never write to the same gap.
+	for (const rows of blocksOf(doc, text, lines)) {
+		if (rows[rows.length - 1].lineEnd < from || rows[0].lineStart > to) continue;
+		emit(layout(rows, new Set(rows.keys()), text, opts));
+	}
+	return edits;
 
-		for (const gap of gaps) {
+	function emit(gaps: Gap[] | undefined): void {
+		for (const gap of gaps ?? []) {
 			if (text.slice(gap.start, gap.end) === gap.text) continue;
 			edits.push({
 				range: { start: td.positionAt(gap.start), end: td.positionAt(gap.end) },
@@ -674,5 +815,4 @@ export function provideFormattingEdits(
 			});
 		}
 	}
-	return edits;
 }

@@ -24,10 +24,9 @@ Solid but still quite early. The foundations are in place and have been tested a
   convention. Globals are filtered to the scripts the reference guide allows.
 - **Hover** — parameters (type, description, flags), keywords, globals, fixed
   parameters, autotexts and query strings, with the scripts each is valid in.
-  Globals and the `ac_`/`ifc_` fixed parameters also carry the **reference
-  guide's own description** — read from the official GRAPHISOFT extension you
-  already have installed. And a variable that arrived from the **master script** 
-  is explained where it is used, with the line that defines it, so a name 
+  Globals and the `ac_`/`ifc_` fixed parameters also carry the **reference guide's own description** — 
+  read from the official GRAPHISOFT extension you already have installed.
+  And a variable that arrived from the **master script** is explained where it is used, with the line that defines it, so a name 
   with no declaration in the file you are reading is no longer a mystery.
 - **Where a Global actually works** — e.g. `GLOB_SCALE` is view dependent so you'll get a warning in the master script.
 - **Diagnostics**
@@ -47,6 +46,7 @@ Solid but still quite early. The foundations are in place and have been tested a
   - "`group`" names can be renamed as well
   - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
 - **Go-to-definition** (⌘-click) for **Group commands**
+- **Auto formatting**
 - **Called Macros view** in the Explorer — every macro the open script calls,
   followed recursively through the workspace and drawn as a classic tree
   (`+`/`−` boxes, dotted connectors). Click a macro to open the script that

@@ -366,6 +366,78 @@ test('...but a statement that needed no alignment keeps even that', () => {
 	assert.equal(format(text), text);
 });
 
+// --- hotspot blocks ---------------------------------------------------------
+
+test('adjacent hotspots line up, the unID counter included', () => {
+	// Asked for by the project owner: the three points of one dynamic hotspot,
+	// each its own one-line statement, read as one table.
+	const text = [
+		'hotspot2 0, 0, unID, shaft_width, 1+256 : unID=unID+1',
+		'hotspot2 shaft_width, 0, unID, shaft_width, 2 : unID=unID+1',
+		'hotspot2 -1, 0, unID, shaft_width, 3 : unID=unID+1',
+	].join('\n');
+	assert.equal(
+		format(text),
+		[
+			'hotspot2 0,           0, unID, shaft_width, 1+256 : unID=unID+1',
+			'hotspot2 shaft_width, 0, unID, shaft_width, 2     : unID=unID+1',
+			'hotspot2 -1,          0, unID, shaft_width, 3     : unID=unID+1',
+		].join('\n'),
+	);
+	assert.equal(
+		format(text, TABS),
+		[
+			'hotspot2 0,\t\t\t\t0,\tunID,\tshaft_width,\t1+256\t: unID=unID+1',
+			'hotspot2 shaft_width,\t0,\tunID,\tshaft_width,\t2\t\t: unID=unID+1',
+			'hotspot2 -1,\t\t\t0,\tunID,\tshaft_width,\t3\t\t: unID=unID+1',
+		].join('\n'),
+	);
+});
+
+test('static hotspots line up too, and rows of different lengths share their columns', () => {
+	// Every row is the same command, so cell n is argument n on all of them — a
+	// static corner beside a dynamic hotspot still lines up its coordinates.
+	assert.equal(
+		format(['\thotspot -w, -w, h, unID : unID=unID+1', '\thotspot 0, 0, h, unID, h, 2 : unID=unID+1 ! mov'].join('\n')),
+		['\thotspot -w, -w, h, unID       : unID=unID+1', '\thotspot 0,  0,  h, unID, h, 2 : unID=unID+1 ! mov'].join('\n'),
+	);
+	assert.equal(
+		format(['hotspot2 a, bb', 'hotspot2 cccc, d'].join('\n')),
+		['hotspot2 a,    bb', 'hotspot2 cccc, d'].join('\n'),
+	);
+});
+
+test('a hotspot block ends at anything that is not one', () => {
+	// A blank or comment line, another command, a label, a different hotspot
+	// command — each splits the run, and a single row has nothing to line up with.
+	for (const between of ['', '! moving point', 'add 1, 0, 0', '100: hotspot2 1, 2', 'hotspot 1, 2, 3']) {
+		const text = ['hotspot2 a, bb', between, 'hotspot2 cccc, d'].join('\n');
+		assert.equal(format(text), text, between);
+	}
+	// A hotspot sharing its line with something in front is not a row either.
+	const text = ['hotspot2 a, bb', 'unID = 1 : hotspot2 cccc, d'].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('a hotspot continued onto the next line is not a block row', () => {
+	// It is a statement of its own rows, aligned — or not — by the ordinary rules.
+	const text = ['hotspot2 a, bb', 'hotspot2 cccc,', '    d'].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('a hotspot block is left alone when alignment would pass 255 characters', () => {
+	const wide = 'x'.repeat(240);
+	const text = [`hotspot2 ${wide}, c`, `hotspot2 b, ${wide}`].join('\n');
+	assert.equal(format(text), text);
+});
+
+test('a string in the rest of the line is not taken for a comment', () => {
+	assert.equal(
+		format(['hotspot2 a, b : s = "!x" ! c', 'hotspot2 cccc, d : s = "y" ! c'].join('\n')),
+		['hotspot2 a,    b : s = "!x" ! c', 'hotspot2 cccc, d : s = "y"  ! c'].join('\n'),
+	);
+});
+
 // --- the 255-character limit ------------------------------------------------
 
 test('a statement is left alone when alignment would pass 255 characters', () => {
@@ -398,6 +470,7 @@ test('the limit is measured in characters, so a tab counts as one', () => {
 test('a single-line statement is never touched', () => {
 	assert.equal(format('put 1,  2,   3'), 'put 1,  2,   3');
 	assert.equal(format('hotspot2 x, y   '), 'hotspot2 x, y   ');
+	// ...unless it is one of a block of hotspots, below.
 });
 
 test('a second statement on the row stops the alignment', () => {
