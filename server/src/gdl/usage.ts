@@ -53,6 +53,13 @@ export interface NameUsage {
 	readonly writes: Write[];
 	/** Whether anything ever reads it. */
 	reads: number;
+	/**
+	 * Handed to a call that may fill it in — `REQUEST`'s outputs, a
+	 * `RETURNED_PARAMETERS` list. Counted as a read above, being unknowable
+	 * either way; recorded here too, for a check asking whether a name is ever
+	 * given a value at all.
+	 */
+	writtenBack: boolean;
 	/** Defined by `FOR i = …`, whose counter need not be read to be doing work. */
 	isLoopVariable: boolean;
 }
@@ -210,6 +217,33 @@ function writeKind(toks: readonly Token[], eq: number): WriteKind {
 	return 'value';
 }
 
+/**
+ * Token positions inside the brackets of every call matching `calls`, plus
+ * everything after `RETURNED_PARAMETERS`, which runs to the end of the
+ * statement.
+ */
+function callArguments(toks: readonly Token[], calls: RegExp): Set<number> {
+	const positions = new Set<number>();
+	for (let i = 0; i < toks.length; i++) {
+		const tok = toks[i];
+		if (tok.type !== 'identifier') continue;
+		if (tok.lower === 'returned_parameters') {
+			for (let j = i + 1; j < toks.length; j++) positions.add(j);
+			break;
+		}
+		if (!calls.test(tok.lower) || !isOp(toks[i + 1], '(')) continue;
+		let depth = 0;
+		for (let j = i + 1; j < toks.length; j++) {
+			if (isOp(toks[j], '(')) depth++;
+			else if (isOp(toks[j], ')')) {
+				depth--;
+				if (depth === 0) break;
+			} else positions.add(j);
+		}
+	}
+	return positions;
+}
+
 /** Adds one statement's names to `usage`. */
 function classify(stmt: Statement, usage: Map<string, NameUsage>): void {
 	const toks = stmt.tokens;
@@ -229,8 +263,9 @@ function classify(stmt: Statement, usage: Map<string, NameUsage>): void {
 	// array is exactly the shape this check exists to grey out. The guide has
 	// `DIM` at the head of its own statement and 0 corpus sites write it
 	// anywhere else, so `stmt.head` is enough — the same reading `arrays.ts`
-	// takes when it collects declarations.
-	if (stmt.head === 'dim') {
+	// takes when it collects declarations. `DICT a, b` is the same statement
+	// for a dictionary, and declares just as much.
+	if (stmt.head === 'dim' || stmt.head === 'dict') {
 		for (let i = 1; i < toks.length; i++) {
 			const prev = toks[i - 1];
 			if (i !== 1 && !isOp(prev, ',')) continue;
@@ -245,24 +280,11 @@ function classify(stmt: Statement, usage: Map<string, NameUsage>): void {
 	// Argument lists that are read wholesale rather than judged: see
 	// OUTPUT_WRITING_CALLS above, and `RETURNED_PARAMETERS a, b`, which runs to
 	// the end of the statement.
-	const readWholesale = new Set<number>();
-	for (let i = 0; i < toks.length; i++) {
-		const tok = toks[i];
-		if (tok.type !== 'identifier') continue;
-		if (tok.lower === 'returned_parameters') {
-			for (let j = i + 1; j < toks.length; j++) readWholesale.add(j);
-			break;
-		}
-		if (!OUTPUT_WRITING_CALLS.test(tok.lower) || !isOp(toks[i + 1], '(')) continue;
-		let depth = 0;
-		for (let j = i + 1; j < toks.length; j++) {
-			if (isOp(toks[j], '(')) depth++;
-			else if (isOp(toks[j], ')')) {
-				depth--;
-				if (depth === 0) break;
-			} else readWholesale.add(j);
-		}
-	}
+	const readWholesale = callArguments(toks, OUTPUT_WRITING_CALLS);
+	// The wider set a name may come back out of, `INPUT` and `CALLFUNCTION`
+	// among them: they leave the direction of a read alone, but a name handed
+	// to one may well have been given its value there.
+	const filledIn = callArguments(toks, CALLED_FOR_EFFECT);
 
 	const record = (tok: Token, write: { kind: WriteKind; isLoopVariable: boolean } | undefined) => {
 		const key = variableKey(tok);
@@ -270,7 +292,13 @@ function classify(stmt: Statement, usage: Map<string, NameUsage>): void {
 		if (!entry) {
 			// A dotted token carries members the key does not; the name shown is
 			// the leading segment as the author spelt it.
-			entry = { name: tok.text.slice(0, key.length), writes: [], reads: 0, isLoopVariable: false };
+			entry = {
+				name: tok.text.slice(0, key.length),
+				writes: [],
+				reads: 0,
+				isLoopVariable: false,
+				writtenBack: false,
+			};
 			usage.set(key, entry);
 		}
 		if (!write) {
@@ -287,8 +315,8 @@ function classify(stmt: Statement, usage: Map<string, NameUsage>): void {
 		if (parameterNames.has(i)) continue;
 		if (isNotAVariable(toks, i)) continue;
 
-		const write = readWholesale.has(i) ? undefined : writes.get(i);
-		record(tok, write);
+		record(tok, readWholesale.has(i) ? undefined : writes.get(i));
+		if (filledIn.has(i)) usage.get(variableKey(tok))!.writtenBack = true;
 	}
 }
 
@@ -322,4 +350,26 @@ export function namesRead(doc: GdlDocument): Set<string> {
 	for (const [key, entry] of nameUsage(doc)) if (entry.reads > 0) read.add(key);
 	readCache.set(doc, read);
 	return read;
+}
+
+const writeCache = new WeakMap<GdlDocument, Set<string>>();
+
+/**
+ * The names a script may give a value to — assigned, looped over, `DIM`med or
+ * `DICT`ed, or handed to a call that fills its arguments in.
+ *
+ * The lenient reading again, from the other end: a name that *might* be
+ * written is in the set, since what asks this is a check reporting the names
+ * that never are. Memoised for the same reason as `namesRead`.
+ */
+export function namesWritten(doc: GdlDocument): Set<string> {
+	const cached = writeCache.get(doc);
+	if (cached) return cached;
+
+	const written = new Set<string>();
+	for (const [key, entry] of nameUsage(doc)) {
+		if (entry.writes.length > 0 || entry.writtenBack) written.add(key);
+	}
+	writeCache.set(doc, written);
+	return written;
 }

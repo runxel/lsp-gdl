@@ -21,13 +21,16 @@
  *      than its `DIM` gave it dimensions.
  *   9. A variable written and never read, which is not an error at all — it
  *      is greyed out rather than listed, being the leftover of an edit.
+ *  10. An attribute command — `PEN`, `MATERIAL`, `FILL` … — handed a name
+ *      nothing ever assigns and no parameter carries, which GDL reads as 0.
  *
  * Deliberately NOT checked yet: undefined *scalar* variables. GDL lets Archicad
  * inject names from several directions (fixed parameters, macro `PARAMETERS
  * ALL`, inherited ancestry) and reads an unset variable as 0, so a naive check
  * produces mostly false positives. An array is the tractable half of that
  * problem, because the guide requires a variable one to be declared outright —
- * see `arrays.ts`. See CLAUDE.md for what the rest would need.
+ * see `arrays.ts` — and an attribute argument is another, a zero there never
+ * being meant — see `attributes.ts`. See CLAUDE.md for what the rest would need.
  */
 
 import { Diagnostic, DiagnosticSeverity, DiagnosticTag } from 'vscode-languageserver/node';
@@ -39,6 +42,7 @@ import { isPermissive, SCRIPT_LABELS } from '../gdl/scriptKind';
 import { provideTypeDiagnostics } from './typecheck';
 import { provideCommaDiagnostics } from './commas';
 import { provideArrayDiagnostics } from './arrays';
+import { provideAttributeDiagnostics } from './attributes';
 import { provideParameterRefDiagnostics } from './paramRefs';
 import { provideOperatorDiagnostics } from './operators';
 import { provideParenDiagnostics } from './parens';
@@ -437,6 +441,7 @@ export function provideDiagnostics(
 		...provideReservedNameDiagnostics(doc, td),
 		...provideCommaDiagnostics(doc, td),
 		...provideArrayDiagnostics(doc, td, resolve),
+		...provideAttributeDiagnostics(doc, td, resolve),
 		...provideParameterRefDiagnostics(doc, td),
 		...provideTypeDiagnostics(doc, td),
 		...provideUnusedDiagnostics(doc, td, resolve),
