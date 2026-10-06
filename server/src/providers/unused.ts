@@ -21,12 +21,17 @@
  * The whole difficulty is that "never read" is a claim about more than one
  * file, and GDL's scopes are not the obvious ones:
  *
- *   - **The master script publishes downward.** `1d.gdl` runs before every
- *     other script, so a variable it writes may be read anywhere in the part;
- *     the parameter script (`vl.gdl`) reaches across it the same way. A
- *     variable of either is judged against *every* script of the library part,
- *     and outside a library part — where the siblings cannot be found — the
- *     check stands down for those two entirely, as `arrays.ts` does.
+ *   - **The master script publishes downward.** `1d.gdl` is prepended to every
+ *     other script, so a variable it writes may be read anywhere in the part.
+ *     Its variables are judged against *every* script of the library part, and
+ *     outside a library part — where the siblings cannot be found — the check
+ *     stands down for the master entirely, as `arrays.ts` does.
+ *   - **The parameter script publishes nothing.** Confirmed by the project
+ *     owner: nothing `vl.gdl` sets reaches any other script — its one way out
+ *     is `PARAMETERS`, which writes a parameter, and parameters are not judged
+ *     here. So a `vl` variable is judged like a 2D or 3D one, against its own
+ *     script and the master's subroutines; a sibling reading the same name
+ *     reads a different variable, and gets 0.
  *   - **The master script also reads upward**, which is the one that is easy to
  *     miss. A jump reaches its own script plus the master's, so `GOSUB "helper"`
  *     from `3d.gdl` runs master code that may read variables `3d.gdl` set a
@@ -57,8 +62,8 @@ import { namesRead, nameUsage, variableKey } from '../gdl/usage';
 
 export const SOURCE = 'gdl';
 
-/** Scripts whose variables reach the rest of the library part. */
-const PUBLISHING_SCRIPTS = new Set(['1d', 'vl']);
+/** Scripts whose variables reach the rest of the library part — the master alone. */
+const PUBLISHING_SCRIPTS = new Set(['1d']);
 
 export function provideUnusedDiagnostics(
 	doc: GdlDocument,

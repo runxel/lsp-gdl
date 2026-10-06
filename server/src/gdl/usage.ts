@@ -333,8 +333,8 @@ export function nameUsage(doc: GdlDocument): Map<string, NameUsage> {
 }
 
 /**
- * Memoised per analysed document. A variable of the master or parameter script
- * is judged against every other script of the part, so an edit there asks the
+ * Memoised per analysed document. A variable of the master script is judged
+ * against every other script of the part, so an edit there asks the
  * same question of up to seven siblings — and `masterScript.ts` hands back the
  * *same* `GdlDocument` for each until its text changes, which is exactly the
  * lifetime this should hold for.

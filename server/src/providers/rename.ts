@@ -9,7 +9,10 @@
  *   - The **master script** (`1d.gdl`) runs before every other script, so a
  *     variable it defines is visible everywhere. Renaming it must touch all
  *     scripts.
- *   - The **parameter script** (`vl.gdl`) likewise reaches across the object.
+ *   - The **parameter script** (`vl.gdl`) does *not*: nothing it sets reaches
+ *     another script, so its variables are renamed in `vl.gdl` alone, like a
+ *     2D or 3D script's. Its one way out is `PARAMETERS`, which is a parameter
+ *     and renamed as one.
  *   - Every other script runs independently of its siblings. A `count` in
  *     `2d.gdl` and a `count` in `3d.gdl` are *different variables that merely
  *     share a name*. Renaming one must NOT touch the other.
@@ -78,8 +81,12 @@ import { readFileSync } from 'node:fs';
 /** Supplies current text for a URI, preferring unsaved editor content. */
 export type TextResolver = (uri: string) => string | undefined;
 
-/** Scripts whose variables are visible to every other script of the object. */
-const PROJECT_WIDE_SCRIPTS = new Set(['1d', 'vl']);
+/**
+ * Scripts whose variables are visible to every other script of the object —
+ * the master alone, being prepended to each. Not `vl.gdl`, which reaches no
+ * other script.
+ */
+const PROJECT_WIDE_SCRIPTS = new Set(['1d']);
 
 const IDENTIFIER_RE = /^[A-Za-z_~][A-Za-z0-9_]*$/;
 
@@ -273,8 +280,8 @@ export function resolveRenameTarget(
 		return { name, range, parameter, projectWide: true };
 	}
 
-	// Not a parameter: project-wide only if the master or parameter script
-	// defines it, since those two run across the whole object.
+	// Not a parameter: project-wide only if the master script defines it,
+	// since that alone is prepended to every other script.
 	const projectWide = libpart
 		? libPartScripts(libpart.root).some((script) => {
 				if (!PROJECT_WIDE_SCRIPTS.has(script.kind)) return false;

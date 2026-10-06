@@ -21,9 +21,10 @@
  *     `DICT`, or a call that fills its arguments in (`REQUEST`, `INPUT`,
  *     `RETURNED_PARAMETERS` …), wherever it stands. Source order is not
  *     execution order once `GOSUB` is in play, so a write after the use counts.
- *   - **A write in a script that reaches this one**, the master and parameter
- *     scripts — `sharedScriptsFor()`, the scope `arrays.ts` reads declarations
- *     from.
+ *   - **A write in the master script**, which is prepended to this one —
+ *     `sharedScriptsFor()`, the scope `arrays.ts` reads declarations from. Not
+ *     the parameter script: nothing it sets reaches another script, so a pen
+ *     assigned only there reads as 0 everywhere else.
  *   - **A parameter**, from `paramlist.xml`. That list holds inherited
  *     parameters too, and a macro's values from a `CALL … PARAMETERS ALL`
  *     arrive through its own list, so nothing is missing from it.

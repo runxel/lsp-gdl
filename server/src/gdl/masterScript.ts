@@ -95,24 +95,40 @@ export function masterScriptFor(
 /**
  * The scripts whose names reach `uri`, itself excluded.
  *
- * Two of the eight run across the whole library part rather than on their own:
- * the master script (`1d.gdl`), which runs ahead of every other, and the
- * parameter script (`vl.gdl`). That is the same scope a rename of a variable
- * defined in either of them uses — see "Scope, and what rename must respect"
- * in CLAUDE.md — and it is deliberately the *generous* reading: whatever a
- * check does with these, being able to see one declaration too many can only
- * quieten it, never make it report something it should not.
+ * Only the master script (`1d.gdl`) does: Archicad prepends it to every other
+ * script it runs, so what it defines is there when they start — a variable, an
+ * array's `DIM`, an inline `DEFINE STYLE`. Whatever cannot apply in the script
+ * it lands in is silently ignored.
+ *
+ * **The parameter script reaches nothing.** Confirmed by the project owner: it
+ * runs only on certain occasions, and nothing it does — a variable, a `DIM`, a
+ * `DEFINE` — is visible to any other script. Its one way back into the object
+ * is `PARAMETERS`, which writes a parameter's value; that is the parameter list
+ * speaking, not the script. An earlier version counted `vl.gdl` here, on the
+ * reasoning that seeing one script too many could only quieten a check — but it
+ * also made a name set only in `vl` look set everywhere, and that name reads as
+ * 0 in every other script.
+ *
+ * A list, so callers need not change if a second such script is ever found.
  */
 export function sharedScriptsFor(
 	uri: string,
 	resolve: TextResolver,
 ): GdlDocument[] {
-	const docs: GdlDocument[] = [];
-	for (const kind of ['1d', 'vl'] as const) {
-		const doc = siblingScript(uri, kind, resolve);
-		if (doc) docs.push(doc);
-	}
-	return docs;
+	const master = siblingScript(uri, '1d', resolve);
+	return master ? [master] : [];
+}
+
+/**
+ * The parameter script of the library part owning `uri`, or undefined for
+ * `vl.gdl` itself and whenever it cannot be read.
+ *
+ * Not a scope — see `sharedScriptsFor` — but where `VALUES` restricts the
+ * parameters, which is a fact about the parameter list and so holds in every
+ * script that reads one.
+ */
+export function parameterScriptFor(uri: string, resolve: TextResolver): GdlDocument | undefined {
+	return siblingScript(uri, 'vl', resolve);
 }
 
 /**
@@ -120,8 +136,8 @@ export function sharedScriptsFor(
  *
  * `sharedScriptsFor` above answers "which scripts reach me"; this answers the
  * mirror, "which scripts do I reach", which is the question a variable of the
- * master or parameter script raises — either publishes to the whole part, so
- * anything asking whether such a variable is live has to read all of them.
+ * master script raises — it is prepended to every other, so anything asking
+ * whether such a variable is live has to read all of them.
  *
  * Returns nothing outside a library part, where the siblings cannot be found.
  */

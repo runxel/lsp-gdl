@@ -63,10 +63,12 @@ import type { GdlDocument, Statement } from './analyzer';
 import type { Token } from './lexer';
 import { referenceDoc } from './referenceDocs';
 import { libPartFor } from './libpart';
-import { sharedScriptsFor, type TextResolver } from './masterScript';
+import { parameterScriptFor, sharedScriptsFor, type TextResolver } from './masterScript';
 import { literalScope, foldInScope, stringValue, type ArrayFill, type LiteralScope } from './literals';
 import { splitArguments } from './arguments';
 import { CLAUSE_STARTERS } from './indirect';
+import { lookupWithVariants } from './keywords';
+import { namesWritten } from './usage';
 
 /** One value a name may take. */
 export interface EnumValue {
@@ -419,12 +421,15 @@ const indexCache = new Map<string, { texts: readonly string[]; index: Map<string
 /**
  * The values the library part itself allows for `parameter`.
  *
- * Scope is the current document plus the scripts that run across the whole
- * part, which is where `VALUES` is written — `masterScript.ts` decides which
- * those are, and it is the same scope a rename of a shared name uses.
+ * Read from the current document, the master script and the parameter script.
+ * The parameter script reaches no other script, but its `VALUES` restricts the
+ * parameter itself, and that holds wherever the parameter is read — it is where
+ * nearly every `VALUES` is written. Its *constants* are another matter; see
+ * `inReach`.
  */
 export function declaredValues(parameter: string, doc: GdlDocument, resolve: TextResolver): EnumValue[] {
-	const docs = [doc, ...sharedScriptsFor(doc.uri, resolve)];
+	const vl = parameterScriptFor(doc.uri, resolve);
+	const docs = [doc, ...sharedScriptsFor(doc.uri, resolve), ...(vl ? [vl] : [])];
 	const texts = docs.map((d) => d.text);
 
 	const cached = indexCache.get(doc.uri);
@@ -434,7 +439,30 @@ export function declaredValues(parameter: string, doc: GdlDocument, resolve: Tex
 			: buildIndex(docs);
 	if (index !== cached?.index) indexCache.set(doc.uri, { texts, index });
 
-	return index.get(parameter.toLowerCase()) ?? [];
+	const values = index.get(parameter.toLowerCase()) ?? [];
+	// Read from `vl.gdl` itself, every constant there is in reach.
+	return vl ? values.flatMap((value) => inReach(value, doc, docs.slice(0, -1))) : values;
+}
+
+/**
+ * `value` as it may be written in `doc`, given the scripts that reach it.
+ *
+ * A `VALUES` list is read from the parameter script, and its constants are
+ * often defined there too — `COOKTOP_TYPE_1 = 1` sits in `Elektroherd 26/vl.gdl`
+ * and nowhere else. But nothing the parameter script sets reaches another
+ * script, so in `2d.gdl` that name reads as 0, and offering it would write a
+ * comparison that is silently always false. Such a constant is offered as the
+ * number behind it instead, caption and all; one whose number is unknown is
+ * not offered at all.
+ *
+ * Corpus: 204 such values in 42 parts, against 26072 named values in all.
+ */
+function inReach(value: EnumValue, doc: GdlDocument, reaching: readonly GdlDocument[]): EnumValue[] {
+	if (!/^[A-Za-z_~]/.test(value.insert)) return [value];
+	const key = value.insert.toLowerCase().split(/[.[]/)[0];
+	if (lookupWithVariants(value.insert) || libPartFor(doc.uri)?.parameters.has(key)) return [value];
+	if (reaching.some((script) => namesWritten(script).has(key))) return [value];
+	return value.numeric === undefined ? [] : [{ ...value, insert: String(value.numeric) }];
 }
 
 

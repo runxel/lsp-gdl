@@ -21,10 +21,10 @@
  *
  * Inline attributes are the other case, and they reach further. A
  * `SET STYLE "Label"` names a style the master script usually `DEFINE`s, so the
- * search runs through this script first and then the scripts that reach it —
- * the master, then the parameter script — stopping at the first that defines
- * the name. A later `DEFINE` of the same name replaces the master's at run
- * time, which is why this script's own wins. Every definition in that script is
+ * search runs through this script first and then the master, which is prepended
+ * to it. A later `DEFINE` of the same name replaces the master's at run time,
+ * which is why this script's own wins. The parameter script is never searched:
+ * nothing it defines reaches another script. Every definition in that script is
  * returned: a style is routinely defined once per branch of an `IF`, at a
  * different size each, and any of them may be the one that ran.
  */
