@@ -252,7 +252,7 @@ connection.onHover((params) => {
 connection.onDefinition((params) => {
 	const textDocument = documents.get(params.textDocument.uri);
 	if (!textDocument) return null;
-	return provideDefinition(getAnalysis(textDocument), textDocument, params.position);
+	return provideDefinition(getAnalysis(textDocument), textDocument, params.position, resolveText);
 });
 
 connection.onDocumentColor((params) => {
