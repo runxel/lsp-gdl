@@ -12,10 +12,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { URI } from 'vscode-uri';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import type { LocationLink } from 'vscode-languageserver/node';
 
 import { analyze } from '../gdl/analyzer';
 import { macroCallSites } from '../gdl/macros';
 import { libraryPartsNamed, macroKey, nearest, setFallbackLibraryRoot, setLibraryRoots } from '../gdl/libraryIndex';
+import { provideDefinition } from '../providers/definition';
 import { provideMacroTree, type MacroTreeNode } from '../providers/macroTree';
 
 const URI_3D = 'file:///lib/Obj/scripts/3d.gdl';
@@ -196,4 +199,43 @@ test('with no workspace folder, the folder beside the script\'s part is searched
 	} finally {
 		setLibraryRoots([lib]);
 	}
+});
+
+// --- Go-to-definition on the name, over the same library ---
+
+function jump(script: string, text: string, needle: string) {
+	const root = part('objects/Caller', { [script]: text });
+	const uri = URI.file(join(root, 'scripts', script)).toString();
+	const td = TextDocument.create(uri, 'gdl-hsf', 0, text);
+	const result = provideDefinition(analyze(uri, text), td, td.positionAt(text.indexOf(needle) + needle.length - 1));
+	return ((result ?? []) as LocationLink[]).map((l) => URI.parse(l.targetUri).fsPath.slice(lib.length + 1));
+}
+
+test('a macro with only a 2D script is that script, even from a master', () => {
+	// TestObject's TestMacro calls TestSubMacro from its 1d.gdl this way;
+	// GRAPHISOFT's link falls back to the macro's libpartdata.xml.
+	assert.deepEqual(jump('1d.gdl', 'call "Only2D" parameters all', 'Only2D'), [
+		join('macros', 'Only2D', 'scripts', '2d.gdl'),
+	]);
+	assert.deepEqual(jump('3d.gdl', 'call "Only2D"', 'Only2D'), [join('macros', 'Only2D', 'scripts', '2d.gdl')]);
+});
+
+test('a string call GRAPHISOFT already resolves is left to them', () => {
+	// MacA has a 3D script and a master; a second link to it would turn the
+	// jump into a peek.
+	assert.deepEqual(jump('3d.gdl', 'call "MacA"', 'MacA'), []);
+	assert.deepEqual(jump('ui.gdl', 'call "MacA"', 'MacA'), []);
+});
+
+test('a call through a variable is followed to every macro it may name', () => {
+	const text = 'if a then m = "MacA" else m = "Only2D"\ncall m';
+	assert.deepEqual(jump('3d.gdl', text, 'call m'), [
+		join('macros', 'MacA', 'scripts', '3d.gdl'),
+		join('macros', 'Only2D', 'scripts', '2d.gdl'),
+	]);
+});
+
+test('a compiled or missing macro has nowhere to go', () => {
+	assert.deepEqual(jump('3d.gdl', 'call "MacB"\ncall "Nowhere"', 'MacB'), []);
+	assert.deepEqual(jump('3d.gdl', 'call "MacB"\ncall "Nowhere"', 'Nowhere'), []);
 });

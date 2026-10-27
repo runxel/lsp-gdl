@@ -11,6 +11,7 @@ import { strict as assert } from 'node:assert';
 import { join } from 'node:path';
 import { URI as Uri } from 'vscode-uri';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { Location } from 'vscode-languageserver/node';
 import { analyze } from '../gdl/analyzer';
 import { provideDefinition } from '../providers/definition';
 
@@ -178,6 +179,7 @@ function attributeJump(source: string, needle: string, occurrence = 1, master = 
 	const result = provideDefinition(analyze(uri, source), td, td.positionAt(index + 1), resolve);
 	if (!result) return undefined;
 	return (Array.isArray(result) ? result : [result]).map((l) => {
+		assert.ok(Location.is(l), 'an attribute resolves to a Location');
 		const text = l.uri === masterUri ? master : source;
 		const ltd = TextDocument.create(l.uri, 'gdl-hsf', 0, text);
 		return {

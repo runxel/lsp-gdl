@@ -47,6 +47,52 @@ Solid but still quite early. The foundations are in place and have been tested a
   - keywords, globals and fixed parameters (`A`, `zzyzx`, `ac_*`) are excluded
 - **Go-to-definition** (⌘-click) for **Group commands**
 - **Auto formatting**
+- **Folding** — blocks (`if`/`endif`, `for`/`next`, both `while` loops,
+  `repeat`/`until`, `group`/`endgroup`, `paragraph`/`endparagraph`) whether
+  indented or not, an `if` with an `else` as two branches, subroutines from
+  their label through the `return`, wrapped argument lists, and runs of comment lines.
+- **Regions** — mark any stretch of a script yourself, and nest them as deep as you like:
+
+  ```gdl
+  ! #region [Hotspots]
+  hotspot2 0, 0
+  hotspot2 A, 0
+  ! #endregion
+  ```
+
+  A region folds down to its first line. **A named one is also listed as a symbol** — in 
+  the Outline view (in a *Regions* group, beside the subroutines
+  and macro calls the GRAPHISOFT extension lists), in the breadcrumbs, and in
+  Go to Symbol in Editor (⇧⌘O / Ctrl+Shift+O) — so you can jump straight to
+  it. The brackets around the name are optional, as is the `#`; case does not
+  matter. The marker must be a comment on a line of its own, and only a
+  `#region` closed by an `#endregion` counts.
+
+  > **Caution: indentation folding is gone.** Once a language server provides
+  > folding, VS Code stops folding `.gdl` files by indentation, so the folds you
+  > get are exactly the ones listed above. A stretch of code that used to fold
+  > only because it was indented — and is none of these — no longer folds;
+  > wrap it in a region instead.
+- **Section headers in the minimap** — named regions, banner comments and
+  subroutines are written into the minimap as headings, so a long script can
+  be navigated at a glance:
+
+  ```text
+  ! ==========================            !------------------------------!
+  ! Hotspots                 → Hotspots   ! what the routine does          → draw handle
+  ! ==========================            "draw handle":
+  ```
+
+  A banner is a title between two identical rule lines (`=`, `-` or `*`). A
+  subroutine is a label under a rule line, with up to three comment lines in
+  between. This ships as a default for `editor.minimap.markSectionHeaderRegex`
+  in `.gdl` files, so there is nothing to set up.
+
+  > **To change the pattern, set it for GDL only**, under `"[gdl-hsf]"` in
+  > your settings. VS Code ranks an extension's language-specific default
+  > above your own *global* setting, so an unscoped
+  > `editor.minimap.markSectionHeaderRegex` no longer applies to `.gdl` files.
+  > `editor.minimap.showMarkSectionHeaders` turns the headings off.
 - **Called Macros view** in the Explorer — every macro the open script calls,
   followed recursively through the workspace and drawn as a classic tree
   (`+`/`−` boxes, dotted connectors). Click a macro to open the script that

@@ -4,7 +4,7 @@
 	"description": "A language server for GDL (Geometric Description Language) for Archicad.",
 	"author": "Lucas Becker",
 	"license": "MIT",
-	"version": "0.6.8",
+	"version": "0.7.0",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/runxel/lsp-gdl"
@@ -131,6 +131,11 @@
 					"default": "off",
 					"description": "Trace the communication between VS Code and the GDL language server."
 				}
+			}
+		},
+		"configurationDefaults": {
+			"[gdl-hsf]": {
+				"editor.minimap.markSectionHeaderRegex": "(?<=^[ \\t]*)![ \\t]*#?[Rr][Ee][Gg][Ii][Oo][Nn][ \\t]+\\[?(?<label>[^\\]\\n]*[^\\]\\s])|(?<=^[ \\t]*)![ \\t]*(?<rule>[=*\\-]{3,})!?[ \\t]*\\n[ \\t]*![ \\t]*(?=[^\\n]*[^\\s=*\\-!][^\\n]*\\n[ \\t]*![ \\t]*\\k<rule>)(?<label>[^\\n]*[^\\s!])|(?<=^[ \\t]*)![ \\t]*[=*\\-]{3,}!?[ \\t]*\\n(?:[ \\t]*![^\\n]*\\n){0,3}[ \\t]*(?:[\"'\\x60](?<label>[^\"'\\x60\\n]+)[\"'\\x60]|(?<label>\\d+))[ \\t]*:"
 			}
 		}
 	},

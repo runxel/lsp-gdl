@@ -98,7 +98,7 @@ function locate(doc: GdlDocument, offset: number): MacroTreeLocation {
 	return { uri: doc.uri, line, character: offset - lineStart };
 }
 
-function fsPathOf(uri: string): string | undefined {
+export function fsPathOf(uri: string): string | undefined {
 	try {
 		const parsed = URI.parse(uri);
 		return parsed.scheme === 'file' ? parsed.fsPath : undefined;
@@ -112,18 +112,24 @@ interface Call {
 	readonly doc: GdlDocument;
 }
 
+/**
+ * The scripts of the part at `root` that a call from a `context` script runs,
+ * and the one going to that macro opens: its script of the caller's kind, else
+ * its master, else whatever script it has. A macro holding nothing but a 2D
+ * script is that script from any caller — a master included, which runs in
+ * whichever context reached it — and never its `libpartdata.xml`.
+ */
+export function scriptsRun(root: string, context: ScriptKind | undefined) {
+	const scripts = libPartScripts(root);
+	const master = scripts.find((s) => s.kind === '1d');
+	const own = context && context !== '1d' ? scripts.find((s) => s.kind === context) : undefined;
+	return { master, own, opens: own ?? master ?? scripts[0] };
+}
+
 export function provideMacroTree(doc: GdlDocument, resolve: TextResolver): MacroTree {
 	const exists = (name: string) => libraryPartsNamed(name).length > 0;
 	let budget = MAX_NODES;
 	let truncated = false;
-
-	/** The scripts a part runs in `context`, master first. */
-	const scriptsRun = (root: string, context: ScriptKind | undefined) => {
-		const scripts = libPartScripts(root);
-		const master = scripts.find((s) => s.kind === '1d');
-		const own = context && context !== '1d' ? scripts.find((s) => s.kind === context) : undefined;
-		return { master, own, opens: own ?? master ?? scripts[0] };
-	};
 
 	const callsIn = (docs: readonly GdlDocument[], master: GdlDocument | undefined): Call[] =>
 		docs.flatMap((d) => macroCallSites(d, master, exists).map((site) => ({ site, doc: d })));

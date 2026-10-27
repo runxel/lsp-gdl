@@ -27,24 +27,39 @@
  * nothing it defines reaches another script. Every definition in that script is
  * returned: a style is routinely defined once per branch of an `IF`, at a
  * different size each, and any of them may be the one that ran.
+ *
+ * A macro call is the third, and it is mostly GRAPHISOFT's: their extension
+ * answers `CALL "name"` with the macro's script of the caller's kind, else its
+ * master, else its `libpartdata.xml`. That last step is wrong for a macro with
+ * no master — one holding only a 2D script lands on XML — so this answers with
+ * the script the Called Macros view opens (`scriptsRun`), and stays out of the
+ * way wherever theirs is already right. VS Code shows every provider's answer,
+ * and two links to one file would turn a plain jump into a peek. The spellings
+ * their extension does not read as a call — a variable, the name unquoted, the
+ * name as a command — are always answered here.
  */
 
-import { Location, Range, type Position } from 'vscode-languageserver/node';
+import { dirname } from 'node:path';
+import { Location, LocationLink, Range, type Position } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { GdlDocument } from '../gdl/analyzer';
 import { attributeDefinitions, attributeReferenceAt } from '../gdl/attributeNames';
 import { groupDefinitions, groupNameAt } from '../gdl/groups';
+import { libPartFor } from '../gdl/libpart';
+import { libraryPartsNamed, nearest, setFallbackLibraryRoot } from '../gdl/libraryIndex';
+import { macroCallSites } from '../gdl/macros';
 import { sharedScriptsFor, type TextResolver } from '../gdl/masterScript';
+import { fsPathOf, scriptsRun } from './macroTree';
 
 export function provideDefinition(
 	doc: GdlDocument,
 	td: TextDocument,
 	position: Position,
 	resolve: TextResolver = () => undefined,
-): Location | Location[] | null {
+): Location | Location[] | LocationLink[] | null {
 	const offset = td.offsetAt(position);
 	const reference = groupNameAt(doc, offset);
-	if (!reference) return attributeDefinition(doc, td, offset, resolve);
+	if (!reference) return attributeDefinition(doc, td, offset, resolve) ?? macroDefinition(doc, td, offset, resolve);
 
 	const at = (start: number, end: number) =>
 		Location.create(doc.uri, Range.create(td.positionAt(start), td.positionAt(end)));
@@ -98,4 +113,34 @@ function attributeDefinition(
 		if (shared) return shared;
 	}
 	return null;
+}
+
+/** `CALL "TestSubMacro"` → the script of that macro the call runs. */
+function macroDefinition(
+	doc: GdlDocument,
+	td: TextDocument,
+	offset: number,
+	resolve: TextResolver,
+): LocationLink[] | null {
+	const libpart = libPartFor(doc.uri);
+	setFallbackLibraryRoot(libpart ? dirname(libpart.root) : undefined);
+	const exists = (name: string) => libraryPartsNamed(name).length > 0;
+	const [master] = sharedScriptsFor(doc.uri, resolve);
+
+	// A call through a variable may name several macros, one site each.
+	const links: LocationLink[] = [];
+	for (const site of macroCallSites(doc, master, exists)) {
+		if (site.name === undefined || offset < site.start || offset > site.end) continue;
+		const part = nearest(libraryPartsNamed(site.name), fsPathOf(doc.uri));
+		if (!part?.root) continue;
+		// Where the macro has a script of the caller's kind or a master,
+		// GRAPHISOFT's link already lands on it.
+		const { master: macroMaster, own, opens } = scriptsRun(part.root, doc.script);
+		if (!opens || (site.spelling === 'string' && (own ?? macroMaster))) continue;
+
+		const top = Range.create(0, 0, 0, 0);
+		const origin = Range.create(td.positionAt(site.start), td.positionAt(site.end));
+		links.push(LocationLink.create(opens.uri, top, top, origin));
+	}
+	return links.length > 0 ? links : null;
 }

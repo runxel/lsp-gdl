@@ -37,6 +37,8 @@ import { provideCompletion, resolveCompletion } from './providers/completion';
 import { provideDefinition } from './providers/definition';
 import { provideHover } from './providers/hover';
 import { provideDiagnostics } from './providers/diagnostics';
+import { provideFoldingRanges } from './providers/folding';
+import { provideDocumentSymbols, SYMBOLS_LABEL } from './providers/symbols';
 import { provideFormattingEdits, type AlignOptions } from './providers/format';
 import { provideInlayHints } from './providers/inlayHints';
 import { provideMacroTree } from './providers/macroTree';
@@ -148,6 +150,12 @@ connection.onInitialize((params: InitializeParams) => {
 			// server directly, so it works whatever the default formatter is.
 			documentFormattingProvider: true,
 			documentRangeFormattingProvider: true,
+			// Replaces VS Code's indentation folding outright — see
+			// `providers/folding.ts`.
+			foldingRangeProvider: true,
+			// Named `! #region`s only — see `providers/symbols.ts`. The label names
+			// this server's group in the Outline, beside GRAPHISOFT's.
+			documentSymbolProvider: { label: SYMBOLS_LABEL },
 			renameProvider: { prepareProvider: true },
 			// Fixes carried by the diagnostics themselves — see
 			// `providers/codeActions.ts`.
@@ -340,6 +348,18 @@ connection.onDocumentRangeFormatting((params) => {
 		alignOptions(params.options),
 		params.range,
 	);
+});
+
+connection.onFoldingRanges((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return [];
+	return provideFoldingRanges(getAnalysis(textDocument), textDocument);
+});
+
+connection.onDocumentSymbol((params) => {
+	const textDocument = documents.get(params.textDocument.uri);
+	if (!textDocument) return [];
+	return provideDocumentSymbols(getAnalysis(textDocument), textDocument);
 });
 
 connection.onCodeAction((params) =>
