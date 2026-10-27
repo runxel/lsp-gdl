@@ -11,6 +11,7 @@ ui_infield "bShowFrame", 120, 40, 100, 20
 
 ! A list item's first two arguments identify the row and the listfield it
 ! belongs to; the parameter comes third. An empty name marks a group row.
+! #region [Listfield Items]
 ui_listfield 1, 10, 70, 210, 60
 ui_listitem 1, 1, ""
 ui_listitem 2, 1, "matBody"
@@ -18,6 +19,7 @@ ui_listitem 2, 1, "matBody"
 ! A fixed parameter is named the same way, and Archicad owns the name — so it
 ! is refused from this spelling exactly as it is from the bare one.
 ui_infield "A", 120, 140, 100, 20
+! #endregion
 
 ! The {2} versions take the parameter bare, so that spelling is an ordinary
 ! identifier and needs nothing special.
