@@ -178,6 +178,69 @@ test('a `THEN` is not stranded when the statement above did not want it', () => 
 	assert.deepEqual(found('for i = 1 to 3 : next i'), []);
 });
 
+test('a `:` after a one-line IF warns that the rest is not conditional', () => {
+	const text = 'if this then that = 1 : foobar = 1';
+	const [d, ...rest] = diagnose(text).filter((d) => /ends the one-line/.test(d.message));
+	assert.deepEqual(rest, []);
+	assert.equal(d.severity, 2 /* Warning */);
+	assert.deepEqual(d.range, { start: { line: 0, character: 22 }, end: { line: 0, character: 23 } });
+	// Once per IF, however long the chain after it.
+	assert.equal(diagnose('if a then x = 1 : y = 2 : z = 3').filter((d) => /ends the one-line/.test(d.message)).length, 1);
+	assert.match(messages('if a then goto 100 : x = 1').join('\n'), /ends the one-line/);
+	assert.match(messages('if a then x = 1 else y = 2 : z = 3').join('\n'), /ends the one-line/);
+});
+
+test('a one-line IF followed by nothing, or by a block, is not warned about', () => {
+	const found = (text: string) => messages(text).filter((m) => /one-line|closes nothing/.test(m));
+	assert.deepEqual(found('if a then x = 1\ny = 2'), []);
+	assert.deepEqual(found('if a then x = 1 ! note : y = 2'), []);
+	assert.deepEqual(found('x = 1 : y = 2'), []);
+	// A block opener is not complete, so the colon inside it is ordinary.
+	assert.deepEqual(found('if a then : x = 1\nendif'), []);
+	assert.deepEqual(found('if a then x = 1 else\n\ty = 2 : z = 3\nendif'), []);
+	assert.deepEqual(found('for i = 1 to 3 : addx 1 : next i'), []);
+	// A `:` that ends its line separates nothing from the next line (`GOSUB 2100:`
+	// and `hbh = 0.1: ENDIF` over a line break are both in the corpus).
+	assert.deepEqual(found('if a then gosub 2100:\nx = 1'), []);
+	assert.deepEqual(found('if a then x = 1:\nendif'), []);
+	assert.deepEqual(found('if a then x = 1 : \\\n\ty = 2'), []);
+	// Shipped Graphisoft code closes the block around a one-line IF this way.
+	assert.deepEqual(found('if a then\n\tif b then x = 1 : endif'), []);
+	// The `:` of a label is not a separator.
+	assert.deepEqual(found('if a then gosub 100\n100: x = 1'), []);
+});
+
+test('an ENDIF after a one-line IF is an error', () => {
+	// Reported by the project owner: all of these are refused by Archicad.
+	const found = (text: string) => diagnose(text).filter((d) => /closes nothing/.test(d.message));
+
+	const [plain, ...r1] = found('if this then that = 1 endif');
+	assert.deepEqual(r1, []);
+	assert.equal(plain.severity, 1 /* Error */);
+	assert.deepEqual(plain.range, { start: { line: 0, character: 22 }, end: { line: 0, character: 27 } });
+
+	const [colon, ...r2] = found('if this then that = 1 : foobar = 1 endif');
+	assert.deepEqual(r2, []);
+	assert.equal(colon.severity, 1 /* Error */);
+	assert.match(colon.message, /the `:` already ended/);
+	assert.deepEqual(colon.range, { start: { line: 0, character: 35 }, end: { line: 0, character: 40 } });
+	// The warning about the colon is given as well.
+	assert.match(messages('if this then that = 1 : foobar = 1 endif').join('\n'), /ends the one-line/);
+
+	// Through a longer chain, and in the ELSE arm.
+	assert.equal(found('if a then x = 1 : y = 2 : z = 3 endif').length, 1);
+	assert.equal(found('if a then x = 1 else y = 2 endif').length, 1);
+});
+
+test('an ENDIF that closes a block is left alone by the one-line check', () => {
+	const found = (text: string) => messages(text).filter((m) => /closes nothing/.test(m));
+	assert.deepEqual(found('if a then\n\tx = 1\nendif'), []);
+	assert.deepEqual(found('if a then\n\tx = 1 : endif'), []);
+	// A one-line IF inside a block, closed by the block's ENDIF on the next line.
+	assert.deepEqual(found('if a then\n\tif b then x = 1\nendif'), []);
+	assert.deepEqual(found('if a then\n\tif b then x = 1 : y = 2\nendif'), []);
+});
+
 test('a command from the wrong script is flagged', () => {
 	assert.match(messages('circle2 0, 0, 1')[0], /not valid in the 3D script/);
 });

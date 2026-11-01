@@ -7,7 +7,8 @@
  *   1. Unbalanced block structure (IF/ENDIF, FOR/NEXT, GROUP/ENDGROUP, ...).
  *      GDL reports these as a single unhelpful error at the end of the script.
  *      Includes an `ELSE` or `ENDIF` swallowed by a stray `\` continuation,
- *      and the mirror of it — a `THEN` stranded by a missing one.
+ *      and the mirror of it — a `THEN` stranded by a missing one. Also a
+ *      one-line `IF` followed by a `:`, and an `ENDIF` it cannot have.
  *   2. A command used in a script where it is not valid, e.g. `CUTPLANE` in
  *      the parameter script.
  *   3. Unterminated string literals.
@@ -280,6 +281,85 @@ function continuationFix(td: TextDocument, at: number): QuickFix | undefined {
 	};
 }
 
+/**
+ * The offset of the `:` that alone separates two statements written on one
+ * line, or -1 when something else (a line break, a `\`, a comment) stands there.
+ */
+function colonBetween(text: string, prev: Statement, next: Statement): number {
+	const gap = text.slice(prev.end, next.start);
+	return /^[ \t]*:[ \t]*$/.test(gap) ? prev.end + gap.indexOf(':') : -1;
+}
+
+/**
+ * A one-line `IF` is complete as it stands, and a `:` ends it:
+ *
+ *     if this then that = 1 : foobar = 1       <- foobar is not conditional
+ *     if this then that = 1 endif              <- no ENDIF to match
+ *     if this then that = 1 : foobar = 1 endif
+ *
+ * The first is legal and so only a `Warning`: it reads as though both
+ * assignments belonged to the `IF`, and the guide says only that "a command
+ * after THEN or ELSE in the same row means a definite ENDIF". The others are
+ * errors, as reported by the project owner — a one-line `IF` takes no `ENDIF`,
+ * and `checkBlocks` cannot see one that is not the head of its statement.
+ *
+ * A statement headed by `ENDIF` after the colon is left to `checkBlocks`: with
+ * a block open it may be closing that, which is perfectly fine.
+ */
+function checkOneLineIf(doc: GdlDocument, td: TextDocument): Diagnostic[] {
+	const text = doc.text;
+	const diagnostics: Diagnostic[] = [];
+	const reported = new Set<number>();
+
+	const reportEndif = (stmt: Statement, viaColon: boolean) => {
+		// Index 0 is the head, which is `checkBlocks`' to judge.
+		for (const tok of stmt.tokens.slice(1)) {
+			if (tok.type !== 'identifier' || tok.lower !== 'endif' || reported.has(tok.start)) continue;
+			reported.add(tok.start);
+			diagnostics.push({
+				severity: DiagnosticSeverity.Error,
+				range: { start: td.positionAt(tok.start), end: td.positionAt(tok.end) },
+				message: viaColon
+					? '`ENDIF` closes nothing: the `:` already ended the one-line `IF` before it, ' +
+						'which is complete without an `ENDIF`.'
+					: '`ENDIF` after a one-line `IF` closes nothing — `IF … THEN statement` is ' +
+						'complete without one.',
+				source: SOURCE,
+			});
+		}
+	};
+
+	for (let s = 0; s < doc.statements.length; s++) {
+		const stmt = doc.statements[s];
+		if (stmt.head !== 'if' || opensBlock(stmt)) continue;
+		// `IF a GOTO 100` is a one-line IF as well; a bare `IF a` is not
+		// complete, and `checkMissingContinuations` has things to say about it.
+		if (!stmt.tokens.some((t) => t.type === 'identifier' && ['then', 'goto', 'gosub'].includes(t.lower))) continue;
+
+		reportEndif(stmt, false);
+
+		for (let j = s + 1; j < doc.statements.length; j++) {
+			const colon = colonBetween(text, doc.statements[j - 1], doc.statements[j]);
+			if (colon < 0) break;
+			// `IF a THEN x = 1 : ENDIF` closes the block around it; an ENDIF is
+			// nobody's idea of a conditional statement.
+			if (j === s + 1 && doc.statements[j].head !== 'endif') {
+				diagnostics.push({
+					severity: DiagnosticSeverity.Warning,
+					range: { start: td.positionAt(colon), end: td.positionAt(colon + 1) },
+					message:
+						'This `:` ends the one-line `IF`: what follows it is not part of the `IF` ' +
+						'and runs whatever the condition says. Use a block `IF … THEN` … `ENDIF` ' +
+						'if both were meant to be conditional.',
+					source: SOURCE,
+				});
+			}
+			reportEndif(doc.statements[j], true);
+		}
+	}
+	return diagnostics;
+}
+
 function checkScriptContext(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const script = doc.script;
 	// The master script runs ahead of every other script, so anything goes.
@@ -354,6 +434,7 @@ export function provideDiagnostics(
 		...checkBlocks(doc, td),
 		...checkSwallowedKeywords(doc, td),
 		...checkMissingContinuations(doc, td),
+		...checkOneLineIf(doc, td),
 		...checkScriptContext(doc, td),
 		...provideOperatorDiagnostics(doc, td),
 		...provideParenDiagnostics(doc, td),
