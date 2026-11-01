@@ -196,6 +196,118 @@ function checkMissingCommas(stmt: Statement, td: TextDocument): Diagnostic[] {
 }
 
 /**
+ * The fewest arguments a command takes, for the commands whose count is fixed.
+ *
+ * A missing comma next to a minus is invisible to `checkMissingCommas`, because
+ * `arrow_y -len_arrow` is a perfectly good subtraction and not two values side
+ * by side:
+ *
+ *     hotline2 -len_arrow, arrow_y -len_arrow, 0 : unID=unID+1
+ *                                ^ comma missing — three arguments, not four
+ *
+ * The spacing cannot decide it (826 corpus sites write `x -0.0025` and mean
+ * the subtraction), but the count can. Curated rather than read from the guide:
+ * a minimum taken from `commandDocs.ts` reports 7346 statements (see "Why not
+ * count arguments instead" in CLAUDE.md), where every number here is the one
+ * the corpus agrees on — 11775 files, and apart from the `USE`/`GET` exemption
+ * below the only short statement is the one above. Too *many* arguments are
+ * not judged: a surplus is not what a lost comma looks like.
+ *
+ * `HOTLINE2` is 4, though the guide writes `unID` as a fifth argument: 418
+ * corpus uses stop at four.
+ */
+const MIN_ARGUMENTS = new Map<string, number>([
+	['line2', 4], ['rect2', 4], ['circle2', 3], ['arc2', 5], ['text2', 3],
+	['add2', 2], ['mul2', 2], ['rot2', 1],
+	['add', 3], ['mul', 3],
+	['hotline2', 4], ['hotline', 7], ['hotspot2', 2], ['hotspot', 3],
+	['block', 3], ['cylind', 2], ['elbow', 3], ['cone', 5],
+]);
+
+/** True when the token ends a value, so a `-` after it could be a subtraction. */
+function endsOperand(tok: Token): boolean {
+	if (tok.type === 'number' || tok.type === 'string') return true;
+	if (tok.type === 'identifier') return !isSyntaxWord(tok);
+	return tok.type === 'operator' && (tok.text === ')' || tok.text === ']');
+}
+
+function checkArgumentCount(stmt: Statement, text: string, td: TextDocument): Diagnostic[] {
+	const toks = stmt.tokens;
+	const diagnostics: Diagnostic[] = [];
+
+	let cursor = 0;
+	while (cursor < toks.length) {
+		let next = toks.length;
+		for (let j = cursor + 1; j < toks.length; j++) {
+			const t = toks[j];
+			if (t.type === 'identifier' && CLAUSE_STARTERS.has(t.lower)) {
+				next = j + 1;
+				break;
+			}
+		}
+
+		const command = toks[cursor];
+		const min = command.type === 'identifier' ? MIN_ARGUMENTS.get(command.lower) : undefined;
+		if (min !== undefined) {
+			let count = 1;
+			let depth = 0;
+			let expands = false;
+			let empty = true;
+			const suspects: number[] = [];
+			for (let i = cursor + 1; i < next; i++) {
+				const t = toks[i];
+				if (t.type === 'identifier' && CLAUSE_STARTERS.has(t.lower)) break;
+				if (t.type === 'operator' && t.text === ':') break;
+				empty = false;
+				// `USE (n)` and `GET (n)` stand for n values each.
+				if (t.type === 'identifier' && (t.lower === 'use' || t.lower === 'get')) expands = true;
+				if (t.type !== 'operator') continue;
+				if (t.text === '(' || t.text === '[' || t.text === '{') depth++;
+				else if (t.text === ')' || t.text === ']' || t.text === '}') depth--;
+				else if (t.text === ',' && depth === 0) count++;
+				else if (
+					t.text === '-' && depth === 0 && i > cursor + 1 && i + 1 < next &&
+					endsOperand(toks[i - 1]) && /[ \t]/.test(text[t.start - 1] ?? '') &&
+					!/[ \t\r\n]/.test(text[t.end] ?? ' ')
+				) {
+					suspects.push(i);
+				}
+			}
+
+			if (!empty && !expands && count < min) {
+				const what =
+					`\`${command.text.toUpperCase()}\` takes at least ${min} arguments, ` +
+					`this has ${count}`;
+				if (suspects.length === 0) {
+					diagnostics.push({
+						severity: DiagnosticSeverity.Warning,
+						range: { start: td.positionAt(command.start), end: td.positionAt(command.end) },
+						message: `${what}.`,
+						source: SOURCE,
+					});
+				}
+				// The minus is where the comma went missing, when anywhere: it
+				// reads as a subtraction, but it is spaced like a sign.
+				for (const i of suspects) {
+					const left = toks[i - 1];
+					const right = toks[i + 1];
+					diagnostics.push({
+						severity: DiagnosticSeverity.Warning,
+						range: { start: td.positionAt(left.end), end: td.positionAt(right.end) },
+						message:
+							`${what} — a comma may be missing before \`-${right.text}\`, ` +
+							`which reads as a subtraction from \`${left.text}\`.`,
+						source: SOURCE,
+					});
+				}
+			}
+		}
+		cursor = next;
+	}
+	return diagnostics;
+}
+
+/**
  * Two commas with nothing between them — an argument left out.
  *
  *     put \
@@ -458,8 +570,11 @@ function checkStrandedArguments(doc: GdlDocument, td: TextDocument): Diagnostic[
 export function provideCommaDiagnostics(doc: GdlDocument, td: TextDocument): Diagnostic[] {
 	const diagnostics: Diagnostic[] = [];
 	for (const stmt of doc.statements) {
-		diagnostics.push(...checkMissingCommas(stmt, td));
+		const missing = checkMissingCommas(stmt, td);
+		diagnostics.push(...missing);
 		diagnostics.push(...checkEmptyArguments(stmt, td));
+		// A comma already named in this statement is the same slip twice over.
+		if (missing.length === 0) diagnostics.push(...checkArgumentCount(stmt, doc.text, td));
 		diagnostics.push(...checkTrailingCommas(stmt, doc.text, td));
 	}
 	diagnostics.push(...checkStrandedArguments(doc, td));

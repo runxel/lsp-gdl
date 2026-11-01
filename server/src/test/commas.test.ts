@@ -106,6 +106,34 @@ test('an open-ended RANGE is not an empty argument', () => {
 	assert.deepEqual(check('values "a" range( , hi)'), []);
 });
 
+// --- argument count ---------------------------------------------------------
+
+test('a comma lost beside a minus is found by the argument count', () => {
+	// `arrow_y -len_arrow` is a subtraction to the parser, so only the count
+	// (Spannrichtung AOL/2d.gdl) gives it away.
+	assert.deepEqual(check('hotline2 -len_arrow, arrow_y -len_arrow, 0 : unID=unID+1'), [
+		'`HOTLINE2` takes at least 4 arguments, this has 3 — a comma may be missing ' +
+			'before `-len_arrow`, which reads as a subtraction from `arrow_y`.',
+	]);
+	// No spaced sign to blame: the command itself is marked.
+	assert.deepEqual(check('line2 0, 0, 1'), ['`LINE2` takes at least 4 arguments, this has 3.']);
+	assert.deepEqual(check('if a then add2 x'), ['`ADD2` takes at least 2 arguments, this has 1.']);
+});
+
+test('a complete argument list is not short', () => {
+	assert.deepEqual(check('hotline2 -len_arrow, arrow_y, -len_arrow, 0 : unID=unID+1'), []);
+	assert.deepEqual(check('hotline2 a, b, c, d, unID'), []);
+	assert.deepEqual(check('line2 0, 0, f(1, 2), -x'), []);
+	assert.deepEqual(check('rotz -90 -teilung / 2'), []);
+	assert.deepEqual(check('x = a -0.0025'), []);
+});
+
+test('USE and GET stand for several values', () => {
+	// Freiformfenster AOL/2d.gdl
+	assert.deepEqual(check('line2 use(4)'), []);
+	assert.deepEqual(check('hotspot2 get(2)'), []);
+});
+
 // --- trailing commas --------------------------------------------------------
 
 test('a comma that swallows the following command is flagged', () => {
